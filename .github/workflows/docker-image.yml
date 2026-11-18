@@ -1,26 +1,28 @@
 name: VEYRIC AI - Docker Build Check
 
 on:
-push:
-branches: ["main"]
-pull_request:
-branches: ["main"]
-workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
-contents: read
+  contents: read
 
 jobs:
-build:
-name: Build Docker Image
-runs-on: ubuntu-latest
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
 
-steps:
-  - name: Checkout source code
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
-  - name: Build VEYRIC AI Docker image
-    run: docker build --pull -t veyric-ai:build-check .
+      - name: Build VEYRIC AI Docker image
+        run: docker build --pull -t veyric-ai:build-check .
 
-  - name: Verify Docker image
-    run: docker image inspect veyric-ai:build-check
+      - name: Verify Docker image
+        run: docker image inspect veyric-ai:build-check
