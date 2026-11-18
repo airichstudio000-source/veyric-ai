@@ -1,0 +1,416 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@font-face {
+  font-family: "Myanmar Njaun";
+  src: url("/MyanmarNjaun.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+1000-109F, U+AA60-AA7F, U+A9E0-A9FF;
+}
+
+/*
+ * Modular Typography System
+ * --------------------------------------------------------------------------
+ * To add custom .ttf or .otf fonts later, register @font-face rules here
+ * and update --font-display / --font-sans / --font-mono below.
+ * Components consume only these CSS variables, never hardcoded font families.
+ */
+:root {
+  --font-display: 'Plus Jakarta Sans', 'Myanmar Njaun', 'Noto Sans Myanmar', system-ui, -apple-system, sans-serif;
+  --font-sans: 'DM Sans', 'Myanmar Njaun', 'Noto Sans Myanmar', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Myanmar Njaun', 'Noto Sans Myanmar', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --glass-bg-canvas: #2d5578;
+  --glass-border-luminous: rgba(255, 255, 255, 0.44);
+  --glass-border-soft: rgba(255, 255, 255, 0.34);
+  --glass-rim-top: rgba(255, 255, 255, 0.62);
+  --glass-rim-bottom: rgba(255, 255, 255, 0.24);
+  --glass-shadow-ambient: rgba(12, 28, 48, 0.24);
+  --glass-text-shadow: 0 1px 3px rgba(10, 26, 46, 0.28);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    font-family: var(--font-sans);
+    background-color: var(--glass-bg-canvas);
+    color: #ffffff;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  input,
+  textarea,
+  button,
+  select {
+    font-family: inherit;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    font-family: inherit;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  code,
+  pre,
+  kbd,
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+/* Original Flower Wallpaper Backdrop with Subtle Readability Blur */
+.veyric-backdrop {
+  position: relative;
+  isolation: isolate;
+  background-color: #3d6b91;
+}
+
+.veyric-backdrop::before {
+  content: '';
+  position: fixed;
+  inset: -16px;
+  z-index: -2;
+  background-image: url('/assets/aistudio/Screenshot_2026-11-18-12-18-14-557_com.miui.home-edit_a91a7c28.jpg');
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+  filter: blur(4px);
+  transform: scale(1.02);
+  pointer-events: none;
+}
+
+.veyric-backdrop::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(
+    180deg,
+    rgba(16, 36, 62, 0.14) 0%,
+    rgba(18, 34, 56, 0.08) 48%,
+    rgba(14, 28, 48, 0.18) 100%
+  );
+  pointer-events: none;
+}
+
+/* Xiaomi Flow Glass — Primary Frosted Panel (Welcome, Sidebar, ContentBlock) */
+.glass-panel {
+  background: linear-gradient(
+    160deg,
+    rgba(218, 234, 248, 0.26) 0%,
+    rgba(78, 114, 150, 0.30) 50%,
+    rgba(170, 204, 232, 0.24) 100%
+  );
+  backdrop-filter: blur(22px) saturate(145%);
+  -webkit-backdrop-filter: blur(22px) saturate(145%);
+  border: 1px solid var(--glass-border-luminous);
+  box-shadow:
+    inset 0 1px 1.5px 0 var(--glass-rim-top),
+    inset 0 -1px 1px 0 var(--glass-rim-bottom),
+    0 14px 36px -12px var(--glass-shadow-ambient);
+  text-shadow: var(--glass-text-shadow);
+}
+
+/* Xiaomi Flow Glass — Translucent Message & Card Surface */
+.glass-surface {
+  background: linear-gradient(
+    160deg,
+    rgba(212, 230, 246, 0.22) 0%,
+    rgba(64, 100, 136, 0.28) 52%,
+    rgba(162, 198, 228, 0.21) 100%
+  );
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid var(--glass-border-soft);
+  box-shadow:
+    inset 0 1px 1px 0 rgba(255, 255, 255, 0.52),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.20),
+    0 10px 28px -12px rgba(12, 28, 48, 0.22);
+  text-shadow: var(--glass-text-shadow);
+}
+
+/* Xiaomi Flow Glass — User Message Bubble (Consistent Pale-Blue Frost) */
+.glass-user-bubble {
+  background: linear-gradient(
+    155deg,
+    rgba(220, 238, 252, 0.28) 0%,
+    rgba(74, 118, 162, 0.32) 55%,
+    rgba(176, 212, 242, 0.25) 100%
+  );
+  backdrop-filter: blur(18px) saturate(148%);
+  -webkit-backdrop-filter: blur(18px) saturate(148%);
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  box-shadow:
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.60),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.22),
+    0 10px 28px -12px rgba(12, 28, 48, 0.24);
+  text-shadow: var(--glass-text-shadow);
+}
+
+/* Xiaomi Flow Glass — Floating Header & Input Dock */
+.glass-floating {
+  background: linear-gradient(
+    165deg,
+    rgba(206, 228, 246, 0.28) 0%,
+    rgba(48, 82, 118, 0.38) 54%,
+    rgba(148, 188, 222, 0.26) 100%
+  );
+  backdrop-filter: blur(26px) saturate(155%);
+  -webkit-backdrop-filter: blur(26px) saturate(155%);
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  box-shadow:
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.62),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.22),
+    0 16px 40px -14px rgba(10, 24, 44, 0.34);
+  text-shadow: var(--glass-text-shadow);
+}
+
+/* Xiaomi Flow Glass — Dedicated Prompt Card */
+.glass-prompt-card {
+  background: linear-gradient(
+    155deg,
+    rgba(224, 240, 255, 0.27) 0%,
+    rgba(66, 110, 152, 0.30) 52%,
+    rgba(182, 218, 246, 0.24) 100%
+  );
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.50);
+  box-shadow:
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.66),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.26),
+    0 12px 30px -12px rgba(10, 26, 46, 0.26);
+  text-shadow: var(--glass-text-shadow);
+}
+
+/* Xiaomi Flow Glass — Interactive Control Pill / Button */
+.glass-control {
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.24) 0%,
+    rgba(186, 216, 242, 0.16) 100%
+  );
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.48),
+    0 4px 12px -4px rgba(10, 24, 44, 0.20);
+  transition: background-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-control:hover:not(:disabled) {
+  background: linear-gradient(
+    165deg,
+    rgba(255, 255, 255, 0.34) 0%,
+    rgba(196, 224, 248, 0.24) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.58);
+}
+
+.glass-control:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Custom Scrollbar for Glass Surfaces */
+.glass-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.glass-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.glass-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 9999px;
+}
+
+.glass-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.44);
+}
+
+/* Prose / Markdown Styling for VEYRIC AI on Xiaomi Flow Glass */
+.veyric-prose {
+  font-size: 0.96875rem;
+  line-height: 1.7;
+  color: rgba(255, 255, 255, 0.96);
+  letter-spacing: 0.005em;
+  overflow-wrap: anywhere;
+}
+
+.veyric-prose > *:first-child {
+  margin-top: 0;
+}
+
+.veyric-prose > *:last-child {
+  margin-bottom: 0;
+}
+
+.veyric-prose p {
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.veyric-prose h1,
+.veyric-prose h2,
+.veyric-prose h3,
+.veyric-prose h4 {
+  font-family: var(--font-display);
+  color: #ffffff;
+  font-weight: 600;
+  line-height: 1.35;
+  margin-top: 1.35rem;
+  margin-bottom: 0.55rem;
+  text-wrap: balance;
+}
+
+.veyric-prose h1 { font-size: 1.35rem; }
+.veyric-prose h2 { font-size: 1.18rem; }
+.veyric-prose h3 { font-size: 1.04rem; }
+
+.veyric-prose ul,
+.veyric-prose ol {
+  margin-top: 0.65rem;
+  margin-bottom: 0.85rem;
+  padding-left: 1.35rem;
+}
+
+.veyric-prose ul {
+  list-style-type: disc;
+}
+
+.veyric-prose ol {
+  list-style-type: decimal;
+}
+
+.veyric-prose li {
+  margin-top: 0.3rem;
+  margin-bottom: 0.3rem;
+}
+
+.veyric-prose li::marker {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.veyric-prose strong {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.veyric-prose blockquote {
+  margin: 0.9rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: 0.875rem;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.veyric-prose hr {
+  margin: 1.25rem 0;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.24);
+}
+
+.veyric-prose a {
+  color: #ffffff;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.65);
+  text-underline-offset: 3px;
+  transition: color 150ms ease, text-decoration-color 150ms ease;
+}
+
+.veyric-prose a:hover {
+  color: #e0f2fe;
+  text-decoration-color: #ffffff;
+}
+
+.veyric-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.veyric-prose th,
+.veyric-prose td {
+  padding: 0.6rem 0.85rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.veyric-prose th {
+  font-weight: 600;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* Three-dot Flow Glass thinking indicator (sequential fade-in / fade-out) */
+@keyframes veyric-dot-fade {
+  0%, 75%, 100% {
+    opacity: 0.22;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+
+.veyric-thinking-dot {
+  animation: veyric-dot-fade 1.4s ease-in-out infinite;
+  will-change: opacity;
+}
+
+.veyric-thinking-dot-1 {
+  animation-delay: 0ms;
+}
+
+.veyric-thinking-dot-2 {
+  animation-delay: 220ms;
+}
+
+.veyric-thinking-dot-3 {
+  animation-delay: 440ms;
+}
+
+/* Smooth single-shot entrance for incoming AI responses */
+@keyframes veyric-response-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.veyric-response-enter {
+  animation: veyric-response-enter 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
