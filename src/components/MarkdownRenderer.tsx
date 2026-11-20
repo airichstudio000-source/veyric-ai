@@ -2,6 +2,7 @@ import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Check, Copy } from 'lucide-react';
+import { playClickSound } from '../lib/sound';
 
 interface CodeBlockProps {
   language: string;
@@ -12,6 +13,7 @@ function CodeBlock({ language, code }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
+    playClickSound();
     try {
       await navigator.clipboard.writeText(code);
       setCopied(true);
@@ -22,7 +24,7 @@ function CodeBlock({ language, code }: CodeBlockProps) {
   };
 
   return (
-    <div className="my-3.5 overflow-hidden rounded-2xl border border-white/30 bg-slate-950/55 backdrop-blur-md">
+    <div className="my-3.5 overflow-hidden rounded-2xl border border-white/30 bg-slate-950/50">
       <div className="flex items-center justify-between border-b border-white/18 bg-white/[0.08] px-3.5 py-2">
         <span className="font-mono text-xs text-white/80">
           {language || 'code'}

@@ -15,6 +15,7 @@ import {
   getContentTypeMeta,
   parseContentSections,
 } from '../lib/contentDetector';
+import { playClickSound } from '../lib/sound';
 import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface ContentBlockProps {
@@ -54,6 +55,7 @@ export function ContentBlock({ type, content, isStreaming }: ContentBlockProps) 
 
   const handleCopyAll = async () => {
     if (!content.trim()) return;
+    playClickSound();
     try {
       await navigator.clipboard.writeText(content);
       setCopiedAll(true);
@@ -64,6 +66,7 @@ export function ContentBlock({ type, content, isStreaming }: ContentBlockProps) 
   };
 
   const handleCopySection = async (id: string, title: string, body: string) => {
+    playClickSound();
     try {
       await navigator.clipboard.writeText(`${title}\n\n${body}`);
       setCopiedSectionId(id);
@@ -75,6 +78,7 @@ export function ContentBlock({ type, content, isStreaming }: ContentBlockProps) 
 
   const handleDownload = () => {
     if (!content.trim()) return;
+    playClickSound();
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');

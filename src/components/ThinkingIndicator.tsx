@@ -21,11 +21,15 @@ export function ThinkingIndicator({ phase }: ThinkingIndicatorProps) {
 
   return (
     <div
-      className="inline-flex items-center py-1.5 text-sm font-medium text-white/90"
+      className="inline-flex items-center gap-2 py-1.5 text-sm font-medium text-white/95"
       role="status"
       aria-live="polite"
       aria-label={`${label}...`}
     >
+      <span
+        className="veyric-loading-orb h-2 w-2 rounded-full bg-white/90 shadow-[0_0_8px_rgba(255,255,255,0.65)]"
+        aria-hidden="true"
+      />
       <span>{label}</span>
       <span className="inline-flex w-5 tracking-wider" aria-hidden="true">
         <span className="veyric-thinking-dot veyric-thinking-dot-1">.</span>

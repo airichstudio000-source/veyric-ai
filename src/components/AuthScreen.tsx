@@ -7,6 +7,7 @@ import {
 } from 'firebase/auth';
 import { AlertCircle, Eye, EyeOff, Loader2, Lock, Mail } from 'lucide-react';
 import { auth, googleProvider } from '../lib/firebase';
+import { playClickSound } from '../lib/sound';
 import { GlassBrandLogo } from './GlassBrandLogo';
 
 type AuthMode = 'signin' | 'signup';
@@ -68,6 +69,7 @@ export function AuthScreen() {
 
   const switchMode = (nextMode: AuthMode) => {
     if (isBusy || nextMode === mode) return;
+    playClickSound();
     setMode(nextMode);
     setError(null);
     setConfirmPassword('');
@@ -75,6 +77,7 @@ export function AuthScreen() {
 
   const handleGoogleLogin = async () => {
     if (isBusy) return;
+    playClickSound();
     setError(null);
     setSubmitting('google');
     try {
@@ -89,6 +92,7 @@ export function AuthScreen() {
   const handleEmailSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (isBusy) return;
+    playClickSound();
 
     const trimmedEmail = email.trim();
     if (!trimmedEmail) {
@@ -133,7 +137,7 @@ export function AuthScreen() {
 
   return (
     <div className="veyric-backdrop relative flex min-h-dvh w-full items-center justify-center overflow-y-auto px-4 py-8 text-white">
-      <div className="glass-panel w-full max-w-[440px] rounded-3xl p-6 sm:p-8">
+      <div className="glass-panel veyric-panel-enter w-full max-w-[440px] rounded-[30px] p-6 sm:p-8">
         {/* Brand Header */}
         <div className="flex flex-col items-center text-center">
           <GlassBrandLogo size={46} className="shrink-0" />
@@ -299,8 +303,11 @@ export function AuthScreen() {
               <button
                 type="button"
                 disabled={isBusy}
-                onClick={() => setShowPassword((prev) => !prev)}
-                className="absolute right-1.5 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-xl text-white/70 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+                onClick={() => {
+                  playClickSound();
+                  setShowPassword((prev) => !prev);
+                }}
+                className="absolute right-1.5 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-xl text-white/75 transition-colors hover:bg-white/15 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
               >
                 {showPassword ? (
@@ -338,8 +345,11 @@ export function AuthScreen() {
                 <button
                   type="button"
                   disabled={isBusy}
-                  onClick={() => setShowConfirmPassword((prev) => !prev)}
-                  className="absolute right-1.5 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-xl text-white/70 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+                  onClick={() => {
+                    playClickSound();
+                    setShowConfirmPassword((prev) => !prev);
+                  }}
+                  className="absolute right-1.5 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-xl text-white/75 transition-colors hover:bg-white/15 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
                   aria-label={
                     showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'
                   }
@@ -357,7 +367,7 @@ export function AuthScreen() {
           <button
             type="submit"
             disabled={isBusy}
-            className="glass-surface mt-2 flex min-h-[46px] w-full items-center justify-center gap-2 rounded-2xl border-white/45 bg-white/[0.22] px-4 py-2.5 text-sm font-semibold text-white transition-all hover:border-white/65 hover:bg-white/[0.30] disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-white"
+            className="glass-surface mt-2 flex min-h-[46px] w-full items-center justify-center gap-2 rounded-2xl border-white/45 bg-white/[0.22] px-4 py-2.5 text-sm font-semibold text-white transition-all hover:border-white/65 hover:bg-white/[0.30] active:scale-[0.985] disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-white"
           >
             {submitting === 'email' ? (
               <>

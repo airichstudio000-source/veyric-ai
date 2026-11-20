@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { PendingAttachment } from '../types/chat';
 import { FILE_INPUT_ACCEPT, formatFileSize } from '../lib/fileValidation';
+import { playClickSound } from '../lib/sound';
 
 interface ChatComposerProps {
   input: string;
@@ -75,21 +76,24 @@ export function ChatComposer({
   return (
     <div className="pointer-events-none sticky bottom-0 z-20 w-full px-3 pb-3 pt-2 sm:px-6 sm:pb-5">
       <div className="pointer-events-auto mx-auto w-full max-w-3xl">
-        <div className="glass-floating rounded-3xl p-2.5 sm:p-3">
+        <div className="glass-floating rounded-[28px] p-2.5 sm:p-3">
           {/* Attachment validation warning */}
           {attachmentError && (
             <div
               role="alert"
-              className="mb-2.5 flex items-center justify-between gap-2 rounded-2xl border border-rose-300/25 bg-rose-500/12 px-3 py-2 text-xs text-rose-100"
+              className="mb-2.5 flex items-center justify-between gap-2 rounded-2xl border border-rose-300/35 bg-rose-500/18 px-3 py-2 text-xs text-rose-50"
             >
               <div className="flex items-center gap-2">
-                <AlertCircle className="h-4 w-4 shrink-0 text-rose-300" />
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-200" />
                 <span>{attachmentError}</span>
               </div>
               <button
                 type="button"
-                onClick={onDismissAttachmentError}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-rose-200 hover:bg-white/10"
+                onClick={() => {
+                  playClickSound();
+                  onDismissAttachmentError();
+                }}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-rose-100 transition-colors hover:bg-white/15 active:scale-95"
                 aria-label="Dismiss file error"
               >
                 <X className="h-3.5 w-3.5" />
@@ -129,8 +133,11 @@ export function ChatComposer({
                   </div>
                   <button
                     type="button"
-                    onClick={() => onRemoveAttachment(att.id)}
-                    className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white/80 transition-colors hover:bg-black/80 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+                    onClick={() => {
+                      playClickSound();
+                      onRemoveAttachment(att.id);
+                    }}
+                    className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/45 text-white/85 transition-all hover:bg-black/75 hover:text-white active:scale-90 focus-visible:outline-2 focus-visible:outline-white"
                     aria-label={`Remove ${att.name}`}
                   >
                     <X className="h-3.5 w-3.5" />
@@ -167,9 +174,12 @@ export function ChatComposer({
               />
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => {
+                  playClickSound();
+                  fileInputRef.current?.click();
+                }}
                 disabled={isStreaming || disabled}
-                className="glass-control inline-flex min-h-[40px] min-w-[40px] items-center justify-center gap-1.5 rounded-2xl px-3 text-xs font-medium text-white/80 hover:text-white disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-white"
+                className="glass-control inline-flex min-h-[40px] min-w-[40px] items-center justify-center gap-1.5 rounded-2xl px-3 text-xs font-medium text-white/90 hover:text-white disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-white"
                 aria-label="Attach image, video, or document"
                 title="Attach JPG, PNG, WEBP, MP4, MOV, PDF, TXT, DOCX"
               >
@@ -179,13 +189,16 @@ export function ChatComposer({
 
               <button
                 type="button"
-                onClick={onToggleWebSearch}
+                onClick={() => {
+                  playClickSound();
+                  onToggleWebSearch();
+                }}
                 aria-pressed={webSearch}
                 disabled={isStreaming}
-                className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-2xl border px-3 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-white disabled:opacity-50 ${
+                className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-2xl border px-3 text-xs font-medium transition-all duration-150 active:scale-95 focus-visible:outline-2 focus-visible:outline-white disabled:opacity-50 ${
                   webSearch
-                    ? 'border-white/60 bg-sky-300/30 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.55)] hover:bg-sky-300/40'
-                    : 'border-white/30 bg-white/[0.12] text-white/85 hover:bg-white/[0.20] hover:text-white'
+                    ? 'border-white/65 bg-sky-300/32 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.6),0_4px_14px_-4px_rgba(125,211,252,0.35)] hover:bg-sky-300/42'
+                    : 'border-white/35 bg-white/[0.14] text-white/90 hover:border-white/55 hover:bg-white/[0.22] hover:text-white'
                 }`}
                 aria-label={webSearch ? 'Disable web search grounding' : 'Enable web search grounding'}
               >
@@ -198,7 +211,7 @@ export function ChatComposer({
               <button
                 type="button"
                 onClick={onStop}
-                className="inline-flex h-10 min-w-[40px] items-center justify-center gap-1.5 rounded-2xl border border-white/20 bg-white/15 px-3.5 text-xs font-medium text-white transition-colors hover:bg-white/25 focus-visible:outline-2 focus-visible:outline-white"
+                className="glass-control inline-flex h-10 min-w-[40px] items-center justify-center gap-1.5 rounded-2xl px-3.5 text-xs font-medium text-white focus-visible:outline-2 focus-visible:outline-white"
                 aria-label="Stop generating response"
               >
                 <Square className="h-3.5 w-3.5 fill-current" />
@@ -209,7 +222,7 @@ export function ChatComposer({
                 type="button"
                 onClick={onSend}
                 disabled={!canSend}
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-950 shadow-[0_4px_18px_rgba(255,255,255,0.2)] transition-all duration-150 hover:bg-sky-100 active:scale-95 disabled:cursor-not-allowed disabled:bg-white/15 disabled:text-white/35 disabled:shadow-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-white text-slate-950 shadow-[0_4px_18px_rgba(255,255,255,0.28)] transition-all duration-150 hover:scale-[1.03] hover:bg-sky-50 active:scale-95 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/40 disabled:shadow-none disabled:hover:scale-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
                 aria-label="Send message"
               >
                 <ArrowUp className="h-4.5 w-4.5 stroke-[2.25]" />

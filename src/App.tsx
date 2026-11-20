@@ -8,6 +8,8 @@ import {
   Loader2,
   PanelLeft,
   Plus,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { auth } from './lib/firebase';
 import type {
@@ -39,6 +41,13 @@ import {
   tryAcquireChatSubmission,
 } from './lib/submissionGuard';
 import { detectContentBlockType } from './lib/contentDetector';
+import {
+  getSoundEnabled,
+  playClickSound,
+  playResponseSound,
+  playSendSound,
+  setSoundEnabledPref,
+} from './lib/sound';
 import { AuthScreen } from './components/AuthScreen';
 import { ChatComposer } from './components/ChatComposer';
 import { GlassBrandLogo } from './components/GlassBrandLogo';
@@ -90,6 +99,7 @@ export default function App() {
     null
   );
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(() => getSoundEnabled());
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const userScrolledUpRef = useRef(false);
@@ -416,6 +426,7 @@ export default function App() {
             );
           },
           onDone: (grounding) => {
+            playResponseSound();
             updateConversation(
               params.conversationId,
               (conv) => ({
@@ -566,6 +577,7 @@ export default function App() {
 
       const submissionToken = tryAcquireChatSubmission(submissionLockRef, isStreaming);
       if (!submissionToken) return;
+      playSendSound();
 
       try {
         const convId = activeConversation.id;
@@ -733,6 +745,7 @@ export default function App() {
 
     const submissionToken = tryAcquireChatSubmission(submissionLockRef, isStreaming);
     if (!submissionToken) return;
+    playSendSound();
 
     try {
       const priorHistory = msgs.slice(0, -2).filter((m) => !m.error && !m.isStreaming);
@@ -778,7 +791,19 @@ export default function App() {
   }, [activeConversation, executeStreamTurn, isStreaming, updateConversation, webSearch]);
 
   const handleStopStreaming = useCallback(() => {
+    playClickSound();
     abortControllerRef.current?.abort();
+  }, []);
+
+  const handleToggleSound = useCallback(() => {
+    setSoundEnabled((prev) => {
+      const next = !prev;
+      setSoundEnabledPref(next);
+      if (next) {
+        playClickSound();
+      }
+      return next;
+    });
   }, []);
 
   const handleSignOut = useCallback(async () => {
@@ -842,10 +867,12 @@ export default function App() {
   if (isAuthLoading) {
     return (
       <div className="veyric-backdrop relative flex h-dvh w-full items-center justify-center px-4 text-white">
-        <div className="glass-panel flex flex-col items-center gap-4 rounded-3xl px-8 py-7 text-center">
-          <GlassBrandLogo size={42} />
-          <div className="flex items-center gap-2 text-sm font-medium text-white/90">
-            <Loader2 className="h-4 w-4 animate-spin text-white/85" />
+        <div className="glass-panel veyric-panel-enter flex flex-col items-center gap-4 rounded-[30px] px-8 py-7 text-center">
+          <div className="veyric-loading-orb">
+            <GlassBrandLogo size={42} />
+          </div>
+          <div className="flex items-center gap-2 text-sm font-medium text-white/95">
+            <Loader2 className="h-4 w-4 animate-spin text-white/90" />
             <span>Checking your session…</span>
           </div>
         </div>
@@ -884,12 +911,15 @@ export default function App() {
       >
         {/* Compact Frosted Glass Header */}
         <header className="sticky top-0 z-20 px-3 pt-3 sm:px-6 sm:pt-3">
-          <div className="glass-floating mx-auto flex h-14 max-w-4xl items-center justify-between gap-4 rounded-2xl px-3 sm:px-4">
+          <div className="glass-floating mx-auto flex h-14 max-w-4xl items-center justify-between gap-3 rounded-[22px] px-3 sm:px-4">
             <div className="flex min-w-0 items-center gap-2.5">
               <button
                 type="button"
-                onClick={() => setIsSidebarOpen((prev) => !prev)}
-                className="glass-control flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/80 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+                onClick={() => {
+                  playClickSound();
+                  setIsSidebarOpen((prev) => !prev);
+                }}
+                className="glass-control flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/85 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
                 aria-label={isSidebarOpen ? 'Hide chat history' : 'Show chat history'}
               >
                 <PanelLeft className="h-4.5 w-4.5" />
@@ -913,15 +943,35 @@ export default function App() {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={handleNewChat}
-              className="glass-control inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-3 text-xs font-medium text-white whitespace-nowrap focus-visible:outline-2 focus-visible:outline-white"
-              aria-label="Start new chat"
-            >
-              <Plus className="h-4 w-4" />
-              <span>New Chat</span>
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={handleToggleSound}
+                aria-pressed={soundEnabled}
+                aria-label={soundEnabled ? 'Turn off sound effects' : 'Turn on sound effects'}
+                title={soundEnabled ? 'Sound On' : 'Sound Off'}
+                className="glass-control flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/85 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+              >
+                {soundEnabled ? (
+                  <Volume2 className="h-4 w-4" />
+                ) : (
+                  <VolumeX className="h-4 w-4 text-white/60" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  playClickSound();
+                  handleNewChat();
+                }}
+                className="glass-control inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-3 text-xs font-medium text-white whitespace-nowrap focus-visible:outline-2 focus-visible:outline-white"
+                aria-label="Start new chat"
+              >
+                <Plus className="h-4 w-4" />
+                <span>New Chat</span>
+              </button>
+            </div>
           </div>
         </header>
 
@@ -948,8 +998,9 @@ export default function App() {
         >
           {!isStorageReady ? (
             <div className="mx-auto flex w-full max-w-3xl flex-1 items-center justify-center">
-              <div className="glass-surface rounded-2xl px-5 py-3 text-sm text-white/65">
-                Loading conversations…
+              <div className="glass-surface veyric-panel-enter flex items-center gap-2.5 rounded-2xl px-5 py-3 text-sm text-white/90">
+                <span className="veyric-loading-orb h-2 w-2 rounded-full bg-white/90" aria-hidden="true" />
+                <span>Loading conversations…</span>
               </div>
             </div>
           ) : messages.length === 0 ? (
@@ -991,8 +1042,11 @@ export default function App() {
           <div className="pointer-events-none relative mx-auto flex w-full max-w-3xl justify-center">
             <button
               type="button"
-              onClick={() => scrollToBottom('smooth')}
-              className="pointer-events-auto glass-floating absolute -top-12 flex h-10 w-10 items-center justify-center rounded-full text-white/85 transition-transform hover:scale-105 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+              onClick={() => {
+                playClickSound();
+                scrollToBottom('smooth');
+              }}
+              className="pointer-events-auto glass-floating absolute -top-12 flex h-10 w-10 items-center justify-center rounded-full text-white/90 transition-transform duration-150 hover:scale-105 hover:text-white active:scale-95 focus-visible:outline-2 focus-visible:outline-white"
               aria-label="Scroll to latest messages"
             >
               <ArrowDown className="h-4 w-4" />
@@ -1016,15 +1070,15 @@ export default function App() {
           onStop={handleStopStreaming}
         />
 
-        {/* Drag & Drop Frosted Glass Overlay */}
+        {/* Drag & Drop Frosted Glass Overlay (blur confined strictly to card, wallpaper stays sharp) */}
         {isDraggingFile && (
-          <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6 backdrop-blur-md">
-            <div className="glass-panel flex max-w-md flex-col items-center rounded-3xl border-dashed border-sky-300/45 px-8 py-10 text-center">
+          <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-slate-950/30 p-6">
+            <div className="glass-panel veyric-panel-enter flex max-w-md flex-col items-center rounded-[28px] border-dashed border-white/60 px-8 py-10 text-center">
               <GlassBrandLogo size={40} />
               <p className="mt-4 font-display text-lg font-semibold text-white">
                 Drop files to attach
               </p>
-              <p className="mt-1 text-xs text-white/70">
+              <p className="mt-1 text-xs text-white/85">
                 Supports JPG, PNG, WEBP, MP4, MOV, WEBM, PDF, TXT, and DOCX (up to 25 MB)
               </p>
             </div>

@@ -19,6 +19,7 @@ import {
   extractPromptDisplay,
 } from '../lib/contentDetector';
 import { formatFileSize } from '../lib/fileValidation';
+import { playClickSound } from '../lib/sound';
 import { ContentBlock } from './ContentBlock';
 import { GlassBrandLogo } from './GlassBrandLogo';
 import { MarkdownRenderer } from './MarkdownRenderer';
@@ -75,8 +76,11 @@ function AttachmentCard({
     return (
       <button
         type="button"
-        onClick={() => onPreviewImage(attachment.previewUrl!, attachment.name)}
-        className="group relative overflow-hidden rounded-2xl border border-white/15 bg-black/30 text-left transition-transform duration-150 hover:scale-[1.01] focus-visible:outline-2 focus-visible:outline-white"
+        onClick={() => {
+          playClickSound();
+          onPreviewImage(attachment.previewUrl!, attachment.name);
+        }}
+        className="group relative overflow-hidden rounded-2xl border border-white/35 bg-black/25 text-left transition-transform duration-150 hover:scale-[1.015] active:scale-[0.985] focus-visible:outline-2 focus-visible:outline-white"
         aria-label={`Preview ${attachment.name}`}
       >
         <img
@@ -142,11 +146,16 @@ export function MessageBubble({
   onPreviewImage,
 }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false);
-  // Capture streaming state on initial mount so entrance animation only plays for newly arriving responses
-  const shouldAnimateEntranceRef = useRef(Boolean(message.isStreaming));
+  // Capture streaming/freshly mounted state on initial mount so entrance animation only plays for new messages
+  const shouldAnimateResponseRef = useRef(Boolean(message.isStreaming));
+  const [animateBubble] = useState(
+    () => Boolean(message.isStreaming) || Date.now() - message.createdAt < 2500
+  );
+  const [bubbleAnimated, setBubbleAnimated] = useState(false);
 
   const handleCopy = async () => {
     if (!message.content) return;
+    playClickSound();
     try {
       await navigator.clipboard.writeText(message.content);
       setCopied(true);
@@ -163,7 +172,10 @@ export function MessageBubble({
 
   if (message.role === 'user') {
     return (
-      <div className="flex justify-end">
+      <div
+        className={`flex justify-end ${animateBubble && !bubbleAnimated ? 'veyric-message-enter' : ''}`}
+        onAnimationEnd={() => setBubbleAnimated(true)}
+      >
         <div className="max-w-[88%] sm:max-w-[78%] md:max-w-[72%]">
           {message.attachments && message.attachments.length > 0 && (
             <div className="mb-2 flex flex-wrap justify-end gap-2">
@@ -177,14 +189,14 @@ export function MessageBubble({
             </div>
           )}
           {message.content.trim().length > 0 && (
-            <div className="glass-user-bubble rounded-3xl rounded-br-lg px-4 py-3 sm:px-5 sm:py-3.5">
+            <div className="glass-user-bubble rounded-[26px] rounded-br-lg px-4 py-3 sm:px-5 sm:py-3.5">
               <p className="whitespace-pre-wrap break-words text-[15px] leading-relaxed text-white sm:text-[15.5px]">
                 {message.content}
               </p>
             </div>
           )}
           <div className="mt-1.5 flex justify-end px-1">
-            <span className="text-[11px] tabular-nums text-white/75">{formattedTime}</span>
+            <span className="text-[11px] tabular-nums text-white/80">{formattedTime}</span>
           </div>
         </div>
       </div>
@@ -218,7 +230,10 @@ export function MessageBubble({
     : null;
 
   return (
-    <div className="flex items-start gap-3 sm:gap-4">
+    <div
+      className={`flex items-start gap-3 sm:gap-4 ${animateBubble && !bubbleAnimated ? 'veyric-message-enter' : ''}`}
+      onAnimationEnd={() => setBubbleAnimated(true)}
+    >
       <div className="mt-1 hidden shrink-0 sm:block">
         <GlassBrandLogo size={30} />
       </div>
@@ -227,7 +242,7 @@ export function MessageBubble({
         <div
           className={`${
             isStructuredDeliverable ? 'glass-panel overflow-hidden' : 'glass-surface'
-          } rounded-3xl rounded-tl-lg px-4 py-4 sm:px-6 sm:py-5`}
+          } rounded-[26px] rounded-tl-lg px-4 py-4 sm:px-6 sm:py-5`}
         >
           {/* Header metadata line (clean unboxed text, no pills) */}
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-white/75">
@@ -258,9 +273,9 @@ export function MessageBubble({
           {/* Incoming Response Content with single-shot Fade-In entrance */}
           {hasContent && (
             <div
-              className={shouldAnimateEntranceRef.current ? 'veyric-response-enter' : undefined}
+              className={shouldAnimateResponseRef.current ? 'veyric-response-enter' : undefined}
               onAnimationEnd={() => {
-                shouldAnimateEntranceRef.current = false;
+                shouldAnimateResponseRef.current = false;
               }}
             >
               {promptDisplay ? (
@@ -317,7 +332,10 @@ export function MessageBubble({
               {onReauthenticate && (
                 <button
                   type="button"
-                  onClick={onReauthenticate}
+                  onClick={() => {
+                    playClickSound();
+                    onReauthenticate();
+                  }}
                   className="glass-control inline-flex min-h-[38px] shrink-0 items-center justify-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-medium text-white focus-visible:outline-2 focus-visible:outline-white"
                 >
                   <LogOut className="h-3.5 w-3.5" />
@@ -391,7 +409,7 @@ export function MessageBubble({
                   <button
                     type="button"
                     onClick={handleCopy}
-                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-medium text-white/80 transition-colors hover:bg-white/[0.14] hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-medium text-white/85 transition-all duration-150 hover:bg-white/[0.16] hover:text-white active:scale-95 focus-visible:outline-2 focus-visible:outline-white"
                     aria-label="Copy AI response"
                   >
                     {copied ? (
@@ -411,7 +429,7 @@ export function MessageBubble({
                   <button
                     type="button"
                     onClick={onRetry}
-                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-medium text-white/80 transition-colors hover:bg-white/[0.14] hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+                    className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-medium text-white/85 transition-all duration-150 hover:bg-white/[0.16] hover:text-white active:scale-95 focus-visible:outline-2 focus-visible:outline-white"
                     aria-label="Regenerate response"
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
@@ -433,7 +451,7 @@ export function MessageBubble({
                 key={suggestion}
                 type="button"
                 onClick={() => onSelectFollowUp(suggestion)}
-                className="glass-control inline-flex min-h-[38px] items-center gap-2 rounded-2xl px-3.5 py-2 text-left text-xs font-medium text-white/85 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+                className="glass-control inline-flex min-h-[38px] items-center gap-2 rounded-2xl px-3.5 py-2 text-left text-xs font-medium text-white/90 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
               >
                 <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-sky-200/80" />
                 <span>{suggestion}</span>

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { X } from 'lucide-react';
+import { playClickSound } from '../lib/sound';
 
 interface MediaLightboxProps {
   imageUrl: string | null;
@@ -21,22 +22,28 @@ export function MediaLightbox({ imageUrl, alt, onClose }: MediaLightboxProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-xl"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4"
       role="dialog"
       aria-modal="true"
       aria-label={alt || 'Image preview'}
-      onClick={onClose}
+      onClick={() => {
+        playClickSound();
+        onClose();
+      }}
     >
       <div
-        className="glass-panel relative max-h-[90vh] max-w-4xl overflow-hidden rounded-3xl p-2"
+        className="glass-panel veyric-panel-enter relative max-h-[90vh] max-w-4xl overflow-hidden rounded-[28px] p-2"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-4 px-3 pb-2 pt-1">
-          <span className="truncate text-sm font-medium text-white/85">{alt}</span>
+          <span className="truncate text-sm font-medium text-white/90">{alt}</span>
           <button
             type="button"
-            onClick={onClose}
-            className="glass-control flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white/80 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+            onClick={() => {
+              playClickSound();
+              onClose();
+            }}
+            className="glass-control flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white/85 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
             aria-label="Close image preview"
           >
             <X className="h-4 w-4" />

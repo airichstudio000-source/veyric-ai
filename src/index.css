@@ -22,13 +22,13 @@
   --font-sans: 'DM Sans', 'Myanmar Njaun', 'Noto Sans Myanmar', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Myanmar Njaun', 'Noto Sans Myanmar', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-  --glass-bg-canvas: #2d5578;
-  --glass-border-luminous: rgba(255, 255, 255, 0.44);
-  --glass-border-soft: rgba(255, 255, 255, 0.34);
-  --glass-rim-top: rgba(255, 255, 255, 0.62);
-  --glass-rim-bottom: rgba(255, 255, 255, 0.24);
-  --glass-shadow-ambient: rgba(12, 28, 48, 0.24);
-  --glass-text-shadow: 0 1px 3px rgba(10, 26, 46, 0.28);
+  --glass-bg-canvas: #5483ab;
+  --glass-border-luminous: rgba(255, 255, 255, 0.52);
+  --glass-border-soft: rgba(255, 255, 255, 0.42);
+  --glass-rim-top: rgba(255, 255, 255, 0.72);
+  --glass-rim-bottom: rgba(255, 255, 255, 0.28);
+  --glass-shadow-ambient: rgba(16, 34, 56, 0.22);
+  --glass-text-shadow: 0 1px 3px rgba(10, 26, 46, 0.36);
 }
 
 @layer base {
@@ -71,160 +71,147 @@
   }
 }
 
-/* Original Flower Wallpaper Backdrop with Subtle Readability Blur */
+/* Sharp, Unblurred Floral Sky Wallpaper (never apply filter: blur() to the background) */
 .veyric-backdrop {
   position: relative;
   isolation: isolate;
-  background-color: #3d6b91;
+  background-color: var(--glass-bg-canvas);
 }
 
 .veyric-backdrop::before {
   content: '';
   position: fixed;
-  inset: -16px;
-  z-index: -2;
-  background-image: url('/assets/aistudio/Screenshot_2026-11-18-12-18-14-557_com.miui.home-edit_a91a7c28.jpg');
+  inset: 0;
+  z-index: -1;
+  background-image: url('/assets/aistudio/Screenshot_2026-11-20-19-27-22-728_com.miui.home-edit_5eecf2c6.jpg');
   background-size: cover;
   background-position: center center;
   background-repeat: no-repeat;
-  filter: blur(4px);
-  transform: scale(1.02);
   pointer-events: none;
 }
 
-.veyric-backdrop::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: linear-gradient(
-    180deg,
-    rgba(16, 36, 62, 0.14) 0%,
-    rgba(18, 34, 56, 0.08) 48%,
-    rgba(14, 28, 48, 0.18) 100%
-  );
-  pointer-events: none;
-}
-
-/* Xiaomi Flow Glass — Primary Frosted Panel (Welcome, Sidebar, ContentBlock) */
+/* Translucent Frosted Glass — Primary Panel (Welcome, Auth, Sidebar, Lightbox, ContentBlock) */
 .glass-panel {
   background: linear-gradient(
-    160deg,
-    rgba(218, 234, 248, 0.26) 0%,
-    rgba(78, 114, 150, 0.30) 50%,
-    rgba(170, 204, 232, 0.24) 100%
+    172deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(64, 96, 128, 0.28) 44%,
+    rgba(42, 74, 108, 0.34) 100%
   );
-  backdrop-filter: blur(22px) saturate(145%);
-  -webkit-backdrop-filter: blur(22px) saturate(145%);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
   border: 1px solid var(--glass-border-luminous);
   box-shadow:
-    inset 0 1px 1.5px 0 var(--glass-rim-top),
+    inset 0 1.5px 1px 0 var(--glass-rim-top),
     inset 0 -1px 1px 0 var(--glass-rim-bottom),
-    0 14px 36px -12px var(--glass-shadow-ambient);
+    0 16px 40px -16px var(--glass-shadow-ambient);
   text-shadow: var(--glass-text-shadow);
 }
 
-/* Xiaomi Flow Glass — Translucent Message & Card Surface */
+/* Translucent Frosted Glass — Assistant Messages & Interactive Cards */
 .glass-surface {
   background: linear-gradient(
-    160deg,
-    rgba(212, 230, 246, 0.22) 0%,
-    rgba(64, 100, 136, 0.28) 52%,
-    rgba(162, 198, 228, 0.21) 100%
+    168deg,
+    rgba(255, 255, 255, 0.18) 0%,
+    rgba(56, 88, 122, 0.28) 46%,
+    rgba(38, 68, 102, 0.34) 100%
+  );
+  backdrop-filter: blur(20px) saturate(135%);
+  -webkit-backdrop-filter: blur(20px) saturate(135%);
+  border: 1px solid var(--glass-border-soft);
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.62),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.22),
+    0 12px 30px -14px rgba(12, 28, 48, 0.22);
+  text-shadow: var(--glass-text-shadow);
+}
+
+/* Translucent Frosted Glass — User Message Bubble */
+.glass-user-bubble {
+  background: linear-gradient(
+    162deg,
+    rgba(255, 255, 255, 0.24) 0%,
+    rgba(72, 110, 148, 0.30) 48%,
+    rgba(46, 82, 120, 0.36) 100%
   );
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
-  border: 1px solid var(--glass-border-soft);
-  box-shadow:
-    inset 0 1px 1px 0 rgba(255, 255, 255, 0.52),
-    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.20),
-    0 10px 28px -12px rgba(12, 28, 48, 0.22);
-  text-shadow: var(--glass-text-shadow);
-}
-
-/* Xiaomi Flow Glass — User Message Bubble (Consistent Pale-Blue Frost) */
-.glass-user-bubble {
-  background: linear-gradient(
-    155deg,
-    rgba(220, 238, 252, 0.28) 0%,
-    rgba(74, 118, 162, 0.32) 55%,
-    rgba(176, 212, 242, 0.25) 100%
-  );
-  backdrop-filter: blur(18px) saturate(148%);
-  -webkit-backdrop-filter: blur(18px) saturate(148%);
-  border: 1px solid rgba(255, 255, 255, 0.46);
-  box-shadow:
-    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.60),
-    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.22),
-    0 10px 28px -12px rgba(12, 28, 48, 0.24);
-  text-shadow: var(--glass-text-shadow);
-}
-
-/* Xiaomi Flow Glass — Floating Header & Input Dock */
-.glass-floating {
-  background: linear-gradient(
-    165deg,
-    rgba(206, 228, 246, 0.28) 0%,
-    rgba(48, 82, 118, 0.38) 54%,
-    rgba(148, 188, 222, 0.26) 100%
-  );
-  backdrop-filter: blur(26px) saturate(155%);
-  -webkit-backdrop-filter: blur(26px) saturate(155%);
-  border: 1px solid rgba(255, 255, 255, 0.46);
-  box-shadow:
-    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.62),
-    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.22),
-    0 16px 40px -14px rgba(10, 24, 44, 0.34);
-  text-shadow: var(--glass-text-shadow);
-}
-
-/* Xiaomi Flow Glass — Dedicated Prompt Card */
-.glass-prompt-card {
-  background: linear-gradient(
-    155deg,
-    rgba(224, 240, 255, 0.27) 0%,
-    rgba(66, 110, 152, 0.30) 52%,
-    rgba(182, 218, 246, 0.24) 100%
-  );
-  backdrop-filter: blur(20px) saturate(150%);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
   border: 1px solid rgba(255, 255, 255, 0.50);
   box-shadow:
-    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.66),
-    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.26),
-    0 12px 30px -12px rgba(10, 26, 46, 0.26);
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.68),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.24),
+    0 12px 28px -14px rgba(12, 28, 48, 0.22);
   text-shadow: var(--glass-text-shadow);
 }
 
-/* Xiaomi Flow Glass — Interactive Control Pill / Button */
+/* Translucent Frosted Glass — Floating Header & Input Dock */
+.glass-floating {
+  background: linear-gradient(
+    172deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(48, 80, 114, 0.34) 48%,
+    rgba(32, 62, 96, 0.40) 100%
+  );
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.70),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.24),
+    0 16px 38px -16px rgba(10, 24, 44, 0.28);
+  text-shadow: var(--glass-text-shadow);
+}
+
+/* Translucent Frosted Glass — Dedicated Prompt Card */
+.glass-prompt-card {
+  background: linear-gradient(
+    162deg,
+    rgba(255, 255, 255, 0.20) 0%,
+    rgba(62, 102, 142, 0.28) 50%,
+    rgba(44, 80, 118, 0.34) 100%
+  );
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.50);
+  box-shadow:
+    inset 0 1.5px 1px 0 rgba(255, 255, 255, 0.66),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.24),
+    0 12px 28px -14px rgba(10, 26, 46, 0.22);
+  text-shadow: var(--glass-text-shadow);
+}
+
+/* Translucent Frosted Glass — Interactive Control Pill / Button */
 .glass-control {
   background: linear-gradient(
-    165deg,
+    168deg,
     rgba(255, 255, 255, 0.24) 0%,
-    rgba(186, 216, 242, 0.16) 100%
+    rgba(255, 255, 255, 0.12) 100%
   );
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid rgba(255, 255, 255, 0.38);
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+  border: 1px solid rgba(255, 255, 255, 0.44);
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.48),
-    0 4px 12px -4px rgba(10, 24, 44, 0.20);
-  transition: background-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
-    border-color 180ms cubic-bezier(0.16, 1, 0.3, 1),
-    transform 150ms cubic-bezier(0.16, 1, 0.3, 1);
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.56),
+    0 4px 12px -6px rgba(10, 24, 44, 0.20);
+  transition:
+    background-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 150ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .glass-control:hover:not(:disabled) {
   background: linear-gradient(
-    165deg,
+    168deg,
     rgba(255, 255, 255, 0.34) 0%,
-    rgba(196, 224, 248, 0.24) 100%
+    rgba(255, 255, 255, 0.18) 100%
   );
-  border-color: rgba(255, 255, 255, 0.58);
+  border-color: rgba(255, 255, 255, 0.66);
+  transform: translateY(-0.5px);
 }
 
 .glass-control:active:not(:disabled) {
-  transform: scale(0.98);
+  transform: scale(0.97);
 }
 
 /* Custom Scrollbar for Glass Surfaces */
@@ -238,19 +225,19 @@
 }
 
 .glass-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.32);
   border-radius: 9999px;
 }
 
 .glass-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.44);
+  background: rgba(255, 255, 255, 0.50);
 }
 
-/* Prose / Markdown Styling for VEYRIC AI on Xiaomi Flow Glass */
+/* Prose / Markdown Styling on Floral Frosted Glass */
 .veyric-prose {
   font-size: 0.96875rem;
   line-height: 1.7;
-  color: rgba(255, 255, 255, 0.96);
+  color: rgba(255, 255, 255, 0.97);
   letter-spacing: 0.005em;
   overflow-wrap: anywhere;
 }
@@ -306,7 +293,7 @@
 }
 
 .veyric-prose li::marker {
-  color: rgba(255, 255, 255, 0.82);
+  color: rgba(255, 255, 255, 0.86);
 }
 
 .veyric-prose strong {
@@ -318,21 +305,21 @@
   margin: 0.9rem 0;
   padding: 0.75rem 1rem;
   border-radius: 0.875rem;
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  color: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  color: rgba(255, 255, 255, 0.96);
 }
 
 .veyric-prose hr {
   margin: 1.25rem 0;
   border: 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.24);
+  border-top: 1px solid rgba(255, 255, 255, 0.28);
 }
 
 .veyric-prose a {
   color: #ffffff;
   text-decoration: underline;
-  text-decoration-color: rgba(255, 255, 255, 0.65);
+  text-decoration-color: rgba(255, 255, 255, 0.70);
   text-underline-offset: 3px;
   transition: color 150ms ease, text-decoration-color 150ms ease;
 }
@@ -353,28 +340,31 @@
 .veyric-prose td {
   padding: 0.6rem 0.85rem;
   text-align: left;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.22);
 }
 
 .veyric-prose th {
   font-weight: 600;
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.14);
 }
 
-/* Three-dot Flow Glass thinking indicator (sequential fade-in / fade-out) */
+/* Smooth Loading Indicator Wave */
 @keyframes veyric-dot-fade {
   0%, 75%, 100% {
-    opacity: 0.22;
+    opacity: 0.25;
+    transform: translateY(0);
   }
   35% {
     opacity: 1;
+    transform: translateY(-1.5px);
   }
 }
 
 .veyric-thinking-dot {
-  animation: veyric-dot-fade 1.4s ease-in-out infinite;
-  will-change: opacity;
+  display: inline-block;
+  animation: veyric-dot-fade 1.35s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  will-change: opacity, transform;
 }
 
 .veyric-thinking-dot-1 {
@@ -382,11 +372,27 @@
 }
 
 .veyric-thinking-dot-2 {
-  animation-delay: 220ms;
+  animation-delay: 200ms;
 }
 
 .veyric-thinking-dot-3 {
-  animation-delay: 440ms;
+  animation-delay: 400ms;
+}
+
+@keyframes veyric-pulse-ring {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+.veyric-loading-orb {
+  animation: veyric-pulse-ring 1.6s ease-in-out infinite;
+  will-change: opacity, transform;
 }
 
 /* Smooth single-shot entrance for incoming AI responses */
@@ -397,12 +403,44 @@
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
 }
 
 .veyric-response-enter {
-  animation: veyric-response-enter 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: veyric-response-enter 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Smooth single-shot bubble entrance for newly dispatched/arriving messages */
+@keyframes veyric-message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.veyric-message-enter {
+  animation: veyric-message-enter 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Subtle panel entrance for Welcome / Auth cards */
+@keyframes veyric-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.veyric-panel-enter {
+  animation: veyric-panel-enter 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 @media (prefers-reduced-motion: reduce) {

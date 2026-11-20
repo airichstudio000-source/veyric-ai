@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import type { Conversation } from '../types/chat';
+import { playClickSound } from '../lib/sound';
 import { GlassBrandLogo } from './GlassBrandLogo';
 
 interface SidebarProps {
@@ -105,18 +106,21 @@ export function Sidebar({
 
   return (
     <>
-      {/* Mobile / Tablet backdrop */}
+      {/* Mobile / Tablet backdrop (unblurred so floral sky wallpaper stays sharp) */}
       {isOpen && (
         <div
-          className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm lg:hidden"
-          onClick={onClose}
+          className="fixed inset-0 z-30 bg-slate-950/35 lg:hidden"
+          onClick={() => {
+            playClickSound();
+            onClose();
+          }}
           aria-hidden="true"
         />
       )}
 
       <aside
         aria-label="Conversation history"
-        className={`glass-panel fixed inset-y-3 left-3 z-40 flex w-[290px] flex-col rounded-3xl transition-transform duration-200 ease-out lg:static lg:inset-auto lg:my-3 lg:ml-3 lg:h-[calc(100%-1.5rem)] lg:w-[296px] lg:shrink-0 lg:translate-x-0 ${
+        className={`glass-panel fixed inset-y-3 left-3 z-40 flex w-[290px] flex-col rounded-[28px] transition-transform duration-200 ease-out lg:static lg:inset-auto lg:my-3 lg:ml-3 lg:h-[calc(100%-1.5rem)] lg:w-[296px] lg:shrink-0 lg:translate-x-0 ${
           isOpen ? 'translate-x-0' : '-translate-x-[calc(100%+1.5rem)] lg:hidden'
         }`}
       >
@@ -130,8 +134,11 @@ export function Sidebar({
           </div>
           <button
             type="button"
-            onClick={onClose}
-            className="glass-control flex h-10 w-10 items-center justify-center rounded-xl text-white/75 hover:text-white focus-visible:outline-2 focus-visible:outline-white lg:hidden"
+            onClick={() => {
+              playClickSound();
+              onClose();
+            }}
+            className="glass-control flex h-10 w-10 items-center justify-center rounded-xl text-white/80 hover:text-white focus-visible:outline-2 focus-visible:outline-white lg:hidden"
             aria-label="Close sidebar"
           >
             <X className="h-4 w-4" />
@@ -143,6 +150,7 @@ export function Sidebar({
           <button
             type="button"
             onClick={() => {
+              playClickSound();
               onNewChat();
               onClose();
             }}
@@ -209,8 +217,11 @@ export function Sidebar({
                               />
                               <button
                                 type="button"
-                                onClick={() => commitRename(conv.id)}
-                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/15 text-white hover:bg-white/25"
+                                onClick={() => {
+                                  playClickSound();
+                                  commitRename(conv.id);
+                                }}
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/15 text-white transition-transform hover:bg-white/25 active:scale-95"
                                 aria-label="Save name"
                               >
                                 <Check className="h-3.5 w-3.5" />
@@ -218,35 +229,40 @@ export function Sidebar({
                               <button
                                 type="button"
                                 onClick={() => {
+                                  playClickSound();
                                   setEditingId(null);
                                   setEditingTitle('');
                                 }}
-                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/60 hover:bg-white/10 hover:text-white"
+                                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white/70 transition-transform hover:bg-white/15 hover:text-white active:scale-95"
                                 aria-label="Cancel rename"
                               >
                                 <X className="h-3.5 w-3.5" />
                               </button>
                             </div>
                           ) : isConfirmingDelete ? (
-                            <div className="flex items-center justify-between gap-2 rounded-2xl border border-rose-300/25 bg-rose-500/10 px-3 py-2">
-                              <span className="truncate text-xs text-rose-100">
+                            <div className="flex items-center justify-between gap-2 rounded-2xl border border-rose-300/35 bg-rose-500/18 px-3 py-2">
+                              <span className="truncate text-xs text-rose-50">
                                 Delete chat?
                               </span>
                               <div className="flex shrink-0 items-center gap-1">
                                 <button
                                   type="button"
                                   onClick={() => {
+                                    playClickSound();
                                     onDeleteConversation(conv.id);
                                     setConfirmDeleteId(null);
                                   }}
-                                  className="min-h-[30px] rounded-lg bg-rose-500/35 px-2.5 text-xs font-medium text-white hover:bg-rose-500/50"
+                                  className="min-h-[30px] rounded-lg bg-rose-500/45 px-2.5 text-xs font-medium text-white transition-transform hover:bg-rose-500/60 active:scale-95"
                                 >
                                   Delete
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => setConfirmDeleteId(null)}
-                                  className="min-h-[30px] rounded-lg px-2 text-xs text-white/70 hover:bg-white/10 hover:text-white"
+                                  onClick={() => {
+                                    playClickSound();
+                                    setConfirmDeleteId(null);
+                                  }}
+                                  className="min-h-[30px] rounded-lg px-2 text-xs text-white/80 transition-transform hover:bg-white/15 hover:text-white active:scale-95"
                                 >
                                   Cancel
                                 </button>
@@ -263,12 +279,13 @@ export function Sidebar({
                               <button
                                 type="button"
                                 onClick={() => {
+                                  playClickSound();
                                   onSelectConversation(conv.id);
                                   onClose();
                                 }}
                                 className="flex min-h-[36px] min-w-0 flex-1 items-center gap-2.5 text-left focus-visible:outline-2 focus-visible:outline-white"
                               >
-                                <MessageSquare className="h-3.5 w-3.5 shrink-0 text-white/70" />
+                                <MessageSquare className="h-3.5 w-3.5 shrink-0 text-white/75" />
                                 <span className="truncate py-0.5 text-[13px] font-medium leading-[1.6]">
                                   {conv.title}
                                 </span>
@@ -279,9 +296,10 @@ export function Sidebar({
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    playClickSound();
                                     startEditing(conv);
                                   }}
-                                  className="flex h-8 w-8 items-center justify-center rounded-lg text-white/55 hover:bg-white/10 hover:text-white focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-white"
+                                  className="flex h-8 w-8 items-center justify-center rounded-lg text-white/70 hover:bg-white/15 hover:text-white focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-white"
                                   aria-label={`Rename ${conv.title}`}
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
@@ -290,10 +308,11 @@ export function Sidebar({
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    playClickSound();
                                     setEditingId(null);
                                     setConfirmDeleteId(conv.id);
                                   }}
-                                  className="flex h-8 w-8 items-center justify-center rounded-lg text-white/55 hover:bg-rose-500/20 hover:text-rose-200 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-white"
+                                  className="flex h-8 w-8 items-center justify-center rounded-lg text-white/70 hover:bg-rose-500/25 hover:text-rose-100 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-white"
                                   aria-label={`Delete ${conv.title}`}
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
@@ -343,7 +362,10 @@ export function Sidebar({
 
             <button
               type="button"
-              onClick={onSignOut}
+              onClick={() => {
+                playClickSound();
+                onSignOut();
+              }}
               disabled={isSigningOut}
               className="glass-control inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-medium text-white/90 hover:text-white disabled:cursor-not-allowed disabled:opacity-55 focus-visible:outline-2 focus-visible:outline-white"
               aria-label="Sign out"

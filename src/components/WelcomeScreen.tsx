@@ -47,14 +47,14 @@ interface WelcomeScreenProps {
 export function WelcomeScreen({ onSelectPrompt }: WelcomeScreenProps) {
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center px-4 py-8 sm:px-6">
-      <div className="glass-panel rounded-3xl p-6 sm:p-10">
+      <div className="glass-panel veyric-panel-enter rounded-[30px] p-6 sm:p-10">
         <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
           <GlassBrandLogo size={44} className="shrink-0" />
           <div>
             <h1 className="font-display text-2xl font-semibold tracking-tight text-white text-balance sm:text-3xl">
               Welcome to VEYRIC AI
             </h1>
-            <p className="mt-1.5 text-sm leading-relaxed text-white/85 sm:text-[15px]">
+            <p className="mt-1.5 text-sm leading-relaxed text-white/90 sm:text-[15px]">
               Ask questions in English or Burmese, verify current facts with live web search, or attach images, videos, and documents for analysis.
             </p>
           </div>
@@ -66,7 +66,7 @@ export function WelcomeScreen({ onSelectPrompt }: WelcomeScreenProps) {
               key={item.title}
               type="button"
               onClick={() => onSelectPrompt(item.prompt, item.webSearch)}
-              className="glass-surface group flex min-h-[84px] flex-col justify-between rounded-2xl p-4 text-left transition-all duration-200 hover:border-white/60 hover:bg-white/[0.16] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+              className="glass-surface group flex min-h-[84px] flex-col justify-between rounded-[22px] p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-white/65 hover:bg-white/[0.18] active:scale-[0.985] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
             >
               <div className="flex w-full items-start justify-between gap-2">
                 <span className="font-display text-sm font-medium text-white">

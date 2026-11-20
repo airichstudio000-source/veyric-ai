@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Check, Copy, Film, Image as ImageIcon, Terminal } from 'lucide-react';
 import type { PromptKind } from '../lib/contentDetector';
+import { playClickSound } from '../lib/sound';
 
 interface PromptCardProps {
   kind: PromptKind;
@@ -29,6 +30,7 @@ export function PromptCard({ kind, heading, promptText }: PromptCardProps) {
   const handleCopyPrompt = async () => {
     const cleanText = promptText.trim();
     if (!cleanText) return;
+    playClickSound();
     try {
       await navigator.clipboard.writeText(cleanText);
       setCopied(true);
