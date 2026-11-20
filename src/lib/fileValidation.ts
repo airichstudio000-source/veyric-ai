@@ -1,7 +1,7 @@
 import type { AttachmentKind, PendingAttachment } from '../types/chat';
 
 export const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024; // 25 MiB
-export const MAX_TOTAL_UPLOAD_BYTES = 40 * 1024 * 1024; // 40 MiB aggregate per request
+export const MAX_TOTAL_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MiB aggregate per request
 export const MAX_ATTACHMENTS_PER_MESSAGE = 5;
 export const MAX_PROMPT_CHARS = 8000;
 
@@ -108,7 +108,7 @@ export function validateAttachmentBatch(
 
     if (runningTotalBytes + file.size > MAX_TOTAL_UPLOAD_BYTES) {
       errors.push(
-        `Adding "${file.name}" (${formatFileSize(file.size)}) exceeds the 40 MB total upload limit per message.`
+        `Adding "${file.name}" (${formatFileSize(file.size)}) exceeds the 25 MB total upload limit per message.`
       );
       continue;
     }
@@ -185,7 +185,7 @@ export function validateOutgoingPayload(params: {
     return {
       valid: false,
       code: 'TOTAL_UPLOAD_TOO_LARGE',
-      error: `Total attached files (${formatFileSize(totalBytes)}) exceed the 40 MB limit per message.`,
+      error: `Total attached files (${formatFileSize(totalBytes)}) exceed the 25 MB limit per message.`,
     };
   }
 

@@ -26,7 +26,7 @@ COPY package.json bun.lock ./
 
 RUN bun install --frozen-lockfile --production
 
-# Stage 3: Minimal Node.js 22 slim runtime image
+# Stage 3: Minimal Node.js 22 slim runtime image (non-root)
 FROM node:22-slim AS runtime
 
 WORKDIR /app
@@ -34,12 +34,21 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=8080
 
-COPY --from=prod-deps /app/node_modules ./node_modules
-COPY --from=builder /app/dist ./dist
-COPY package.json ./
-COPY server.ts ./
-COPY server ./server
+RUN mkdir -p /app /tmp/veyric-ai-uploads && \
+  chown -R node:node /app /tmp/veyric-ai-uploads && \
+  chmod 1777 /tmp
+
+COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --chown=node:node package.json ./
+COPY --chown=node:node server.ts ./
+COPY --chown=node:node server ./server
+
+USER node
 
 EXPOSE 8080
 
-CMD ["npm", "run", "start"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:8080/api/health', { signal: AbortSignal.timeout(4000) }).then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+
+CMD ["node", "server.ts"]

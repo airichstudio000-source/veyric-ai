@@ -24,6 +24,18 @@ export const SERVICE_BUSY_ERROR_MESSAGE =
 export const GENERIC_CHAT_ERROR_MESSAGE =
   'Failed to generate a response. Please try again.';
 
+export const NETWORK_ERROR_MESSAGE =
+  'Unable to reach VEYRIC AI right now. Please check your internet connection or reload the page and try again.';
+
+export const AUTH_BRIDGE_REDIRECT_ERROR_MESSAGE =
+  'Your AI Studio session may need to be refreshed. Please reload the page or check your AI Studio session and try again.';
+
+export const NON_SSE_RESPONSE_ERROR_MESSAGE =
+  'The chat connection received an unexpected page instead of an AI response. Please reload the page or check your AI Studio session and try again.';
+
+export const INCOMPLETE_STREAM_ERROR_MESSAGE =
+  'The response ended unexpectedly before completion. Please try again.';
+
 export class ChatApiError extends Error {
   kind: ChatErrorKind;
   statusCode?: number;
@@ -52,9 +64,16 @@ function containsSensitiveOrRawPayload(text: string): boolean {
     /Bearer\s+[A-Za-z0-9._-]+/i.test(text) ||
     /got status:/i.test(text) ||
     (text.includes('{') && text.includes('"error"')) ||
-    /api[_-]?key|gemini_api_key/i.test(text)
+    /api[_-]?key|gemini_api_key/i.test(text) ||
+    /https?:\/\/\S+/i.test(text) ||
+    /__SECURE-aistudio_|aistudio_auth_token|applet-auth-bridge|__cookie_check\.html/i.test(text)
   );
 }
+
+const NETWORK_ERROR_RE =
+  /(?:failed to fetch|load failed|fetch failed|networkerror|network error|network request failed|internet connection appears to be offline|err_network|err_internet_disconnected|err_connection_|err_name_not_resolved|err_http2_|err_incomplete_chunked_encoding|econnreset|econnrefused|etimedout|enotfound|socket hang up)/i;
+
+const REDIRECT_ERROR_RE = /(?:opaqueredirect|unexpected redirect)/i;
 
 export function parseRetryAfterSeconds(
   headerValue: string | null,
@@ -116,7 +135,7 @@ const RETRYABLE_CODE_FALLBACKS: Record<string, (retryAfter?: number) => string> 
       : SERVICE_BUSY_ERROR_MESSAGE,
   FILE_TOO_LARGE: () => 'One of the attached files exceeds the 25 MB per-file limit.',
   TOO_MANY_FILES: () => 'You can attach up to 5 files per message.',
-  TOTAL_UPLOAD_TOO_LARGE: () => 'Total attached files exceed the 40 MB limit per message.',
+  TOTAL_UPLOAD_TOO_LARGE: () => 'Total attached files exceed the 25 MB limit per message.',
   FIELD_TOO_LARGE: () => 'Message text or history is too large to submit.',
   TOO_MANY_FIELDS: () => 'Too many form fields were sent in this request.',
   TOO_MANY_PARTS: () => 'This upload has too many parts. Please send fewer items at once.',
@@ -287,7 +306,29 @@ export function classifyChatError(params: {
     };
   }
 
-  // 7. Ordinary / network / server errors -> retryable with sanitized friendly message
+  // 7. Detected auth-bridge redirect or opaque response
+  if (
+    statusCode === 0 ||
+    (statusCode !== undefined && statusCode >= 300 && statusCode < 400) ||
+    REDIRECT_ERROR_RE.test(lower)
+  ) {
+    return {
+      kind: 'retryable',
+      code,
+      message: AUTH_BRIDGE_REDIRECT_ERROR_MESSAGE,
+    };
+  }
+
+  // 8. Browser / transport network failures (e.g. "Failed to fetch", "Load failed")
+  if (NETWORK_ERROR_RE.test(lower)) {
+    return {
+      kind: 'retryable',
+      code,
+      message: NETWORK_ERROR_MESSAGE,
+    };
+  }
+
+  // 9. Ordinary / server errors -> retryable with sanitized friendly message
   if (
     !safeTrimmed ||
     statusCode === 500 ||
@@ -338,8 +379,8 @@ export interface HealthResponse {
 }
 
 export async function fetchHealthStatus(): Promise<HealthResponse> {
-  const response = await fetch('/api/health');
-  if (!response.ok) {
+  const response = await fetch('/api/health', { redirect: 'manual' });
+  if (isRedirectOrOpaqueResponse(response) || !response.ok) {
     throw new Error('Unable to reach server health check.');
   }
   return (await response.json()) as HealthResponse;
@@ -463,6 +504,55 @@ export interface StreamChatParams {
   onDone: (grounding: GroundingInfo) => void;
 }
 
+function isRedirectOrOpaqueResponse(response: Response): boolean {
+  return (
+    response.type === 'opaqueredirect' ||
+    response.status === 0 ||
+    (response.status >= 300 && response.status < 400)
+  );
+}
+
+function isHtmlContentType(response: Response): boolean {
+  const contentType = response.headers?.get?.('content-type')?.toLowerCase() ?? '';
+  return contentType.includes('text/html') || contentType.includes('application/xhtml+xml');
+}
+
+async function cancelBodySafely(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Ignore cancellation errors
+  }
+}
+
+async function performChatFetch(
+  token: string,
+  params: {
+    message: string;
+    webSearch: boolean;
+    serializedHistory: SerializedHistoryTurn[];
+    files: File[];
+  },
+  signal: AbortSignal
+): Promise<Response> {
+  try {
+    return await fetch('/api/chat', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: buildChatFormData(params),
+      redirect: 'manual',
+      signal,
+    });
+  } catch (err) {
+    if (signal.aborted) {
+      throw err;
+    }
+    throw toChatApiError(err);
+  }
+}
+
 export async function streamChatCompletion({
   history,
   message,
@@ -484,33 +574,26 @@ export async function streamChatCompletion({
   }
 
   const serializedHistory = buildBoundedSerializedHistory(history);
+  const payloadParams = { message, webSearch, serializedHistory, files };
 
   const initialToken = await getRequiredIdToken(false);
-  let response = await fetch('/api/chat', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${initialToken}`,
-    },
-    body: buildChatFormData({ message, webSearch, serializedHistory, files }),
-    signal,
-  });
+  let response = await performChatFetch(initialToken, payloadParams, signal);
+
+  if (isRedirectOrOpaqueResponse(response)) {
+    await cancelBodySafely(response);
+    throw new ChatApiError(AUTH_BRIDGE_REDIRECT_ERROR_MESSAGE, 'retryable');
+  }
 
   // Controlled single retry with a force-refreshed Firebase ID token if 401 is returned
   if (response.status === 401 && !signal.aborted) {
-    try {
-      await response.body?.cancel();
-    } catch {
-      // Ignore cancellation errors on rejected response body
-    }
+    await cancelBodySafely(response);
     const refreshedToken = await getRequiredIdToken(true);
-    response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${refreshedToken}`,
-      },
-      body: buildChatFormData({ message, webSearch, serializedHistory, files }),
-      signal,
-    });
+    response = await performChatFetch(refreshedToken, payloadParams, signal);
+
+    if (isRedirectOrOpaqueResponse(response)) {
+      await cancelBodySafely(response);
+      throw new ChatApiError(AUTH_BRIDGE_REDIRECT_ERROR_MESSAGE, 'retryable');
+    }
   }
 
   if (!response.ok) {
@@ -554,6 +637,11 @@ export async function streamChatCompletion({
     );
   }
 
+  if (isHtmlContentType(response)) {
+    await cancelBodySafely(response);
+    throw new ChatApiError(NON_SSE_RESPONSE_ERROR_MESSAGE, 'retryable');
+  }
+
   if (!response.body) {
     throw new ChatApiError(GENERIC_CHAT_ERROR_MESSAGE, 'retryable');
   }
@@ -563,85 +651,102 @@ export async function streamChatCompletion({
   let buffer = '';
   let receivedDone = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
+      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
 
-    let boundary = buffer.indexOf('\n\n');
-    while (boundary !== -1) {
-      const rawEvent = buffer.slice(0, boundary).trim();
-      buffer = buffer.slice(boundary + 2);
-
-      if (rawEvent.startsWith('data:')) {
-        const jsonPayload = rawEvent.slice(5).trim();
-        if (jsonPayload) {
-          let parsed: {
-            type?: string;
-            phase?: StreamPhase;
-            text?: string;
-            grounding?: GroundingInfo;
-            statusCode?: number;
-            error?: string;
-            code?: string;
-            retryAfterSeconds?: number;
-          };
-          try {
-            parsed = JSON.parse(jsonPayload);
-          } catch {
-            boundary = buffer.indexOf('\n\n');
-            continue;
-          }
-
-          if (parsed.type === 'status' && parsed.phase) {
-            onStatus(parsed.phase);
-          } else if (parsed.type === 'delta' && typeof parsed.text === 'string') {
-            onDelta(parsed.text);
-          } else if (parsed.type === 'done') {
-            receivedDone = true;
-            onDone(
-              parsed.grounding ?? {
-                enabled: webSearch,
-                used: false,
-                searchQueries: [],
-                sources: [],
-              }
-            );
-          } else if (parsed.type === 'error') {
-            const retryAfterSeconds = parseRetryAfterSeconds(
-              null,
-              parsed.retryAfterSeconds
-            );
-            const classified = classifyChatError({
-              statusCode:
-                typeof parsed.statusCode === 'number' ? parsed.statusCode : undefined,
-              rawMessage: typeof parsed.error === 'string' ? parsed.error : undefined,
-              code: typeof parsed.code === 'string' ? parsed.code : undefined,
-              retryAfterSeconds,
-            });
-            throw new ChatApiError(
-              classified.message,
-              classified.kind,
-              classified.statusCode,
-              classified.code,
-              classified.retryAfterSeconds
-            );
-          }
-        }
+      if (!receivedDone && /^\s*(?:<!doctype\s+html|<html\b)/i.test(buffer)) {
+        await reader.cancel().catch(() => {});
+        throw new ChatApiError(NON_SSE_RESPONSE_ERROR_MESSAGE, 'retryable');
       }
 
-      boundary = buffer.indexOf('\n\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary !== -1) {
+        const rawEvent = buffer.slice(0, boundary).trim();
+        buffer = buffer.slice(boundary + 2);
+
+        if (rawEvent.startsWith('data:')) {
+          const jsonPayload = rawEvent.slice(5).trim();
+          if (jsonPayload) {
+            let parsed: {
+              type?: string;
+              phase?: StreamPhase;
+              text?: string;
+              grounding?: GroundingInfo;
+              statusCode?: number;
+              error?: string;
+              code?: string;
+              retryAfterSeconds?: number;
+            };
+            try {
+              parsed = JSON.parse(jsonPayload);
+            } catch {
+              boundary = buffer.indexOf('\n\n');
+              continue;
+            }
+
+            if (parsed.type === 'status' && parsed.phase) {
+              onStatus(parsed.phase);
+            } else if (parsed.type === 'delta' && typeof parsed.text === 'string') {
+              onDelta(parsed.text);
+            } else if (parsed.type === 'done') {
+              receivedDone = true;
+              onDone(
+                parsed.grounding ?? {
+                  enabled: webSearch,
+                  used: false,
+                  searchQueries: [],
+                  sources: [],
+                }
+              );
+            } else if (parsed.type === 'error') {
+              const retryAfterSeconds = parseRetryAfterSeconds(
+                null,
+                parsed.retryAfterSeconds
+              );
+              const classified = classifyChatError({
+                statusCode:
+                  typeof parsed.statusCode === 'number' ? parsed.statusCode : undefined,
+                rawMessage: typeof parsed.error === 'string' ? parsed.error : undefined,
+                code: typeof parsed.code === 'string' ? parsed.code : undefined,
+                retryAfterSeconds,
+              });
+              throw new ChatApiError(
+                classified.message,
+                classified.kind,
+                classified.statusCode,
+                classified.code,
+                classified.retryAfterSeconds
+              );
+            }
+          }
+        }
+
+        boundary = buffer.indexOf('\n\n');
+      }
     }
+  } catch (err) {
+    if (signal.aborted || err instanceof ChatApiError) {
+      throw err;
+    }
+    throw toChatApiError(err);
   }
 
-  if (!receivedDone && !signal.aborted) {
-    onDone({
-      enabled: webSearch,
-      used: false,
-      searchQueries: [],
-      sources: [],
-    });
+  buffer += decoder.decode().replace(/\r\n/g, '\n');
+  if (!receivedDone && /^\s*(?:<!doctype\s+html|<html\b)/i.test(buffer)) {
+    throw new ChatApiError(NON_SSE_RESPONSE_ERROR_MESSAGE, 'retryable');
+  }
+
+  if (!receivedDone) {
+    if (signal.aborted) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException('The operation was aborted.', 'AbortError');
+    }
+    throw new ChatApiError(INCOMPLETE_STREAM_ERROR_MESSAGE, 'retryable');
   }
 }
 
@@ -670,10 +775,17 @@ export async function fetchFollowUpSuggestions(params: {
         Authorization: `Bearer ${initialToken}`,
       },
       body,
+      redirect: 'manual',
       signal: params.signal,
     });
 
+    if (isRedirectOrOpaqueResponse(response)) {
+      await cancelBodySafely(response);
+      return [];
+    }
+
     if (response.status === 401 && !params.signal?.aborted) {
+      await cancelBodySafely(response);
       const refreshedToken = await getRequiredIdToken(true);
       response = await fetch('/api/followups', {
         method: 'POST',
@@ -682,8 +794,14 @@ export async function fetchFollowUpSuggestions(params: {
           Authorization: `Bearer ${refreshedToken}`,
         },
         body,
+        redirect: 'manual',
         signal: params.signal,
       });
+
+      if (isRedirectOrOpaqueResponse(response)) {
+        await cancelBodySafely(response);
+        return [];
+      }
     }
 
     if (!response.ok) return [];

@@ -57,6 +57,7 @@ export interface ChatMessage {
 
 export interface Conversation {
   id: string;
+  ownerUid?: string;
   title: string;
   createdAt: number;
   updatedAt: number;

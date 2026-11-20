@@ -3,6 +3,7 @@ import path from 'node:path';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import type { Content, GenerateContentConfig, Part } from '@google/genai';
 import mammoth from 'mammoth';
+import { protectionConfig } from './config.ts';
 
 export interface IncomingHistoryMessage {
   role: 'user' | 'assistant';
@@ -30,7 +31,6 @@ export interface GroundingResult {
   sources: GroundingSource[];
 }
 
-const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
 const INLINE_THRESHOLD_BYTES = 8 * 1024 * 1024; // 8 MB
 const MAX_TEXT_DOC_CHARS = 180_000;
 
@@ -163,6 +163,150 @@ export class HttpError extends Error {
   }
 }
 
+const CHAT_TIMEOUT_MESSAGE = 'The AI request timed out. Please try again.';
+const CHAT_STREAM_TIMEOUT_MESSAGE = 'The AI response timed out while streaming. Please try again.';
+const FILE_UPLOAD_TIMEOUT_MESSAGE = 'Uploading or processing the attached file timed out. Please try again.';
+const FOLLOWUP_TIMEOUT_MESSAGE = 'Generating follow-up suggestions timed out. Please try again.';
+
+interface TimeoutContext {
+  signal: AbortSignal;
+  hasTimedOut: () => boolean;
+  isExternallyAborted: () => boolean;
+  remainingMs: () => number;
+  throwIfAborted: () => void;
+  cleanup: () => void;
+}
+
+function createTimeoutContext(
+  timeoutMs: number,
+  timeoutMessage: string,
+  externalSignal?: AbortSignal
+): TimeoutContext {
+  const controller = new AbortController();
+  const safeTimeoutMs = Math.max(1, Math.floor(timeoutMs));
+  const deadline = Date.now() + safeTimeoutMs;
+  let timedOut = false;
+  let externallyAborted = Boolean(externalSignal?.aborted);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const onExternalAbort = () => {
+    externallyAborted = true;
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    controller.abort(new HttpError(499, 'Request cancelled.'));
+  };
+
+  if (externalSignal?.aborted) {
+    onExternalAbort();
+  } else {
+    externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+    timer = setTimeout(() => {
+      if (!externallyAborted) {
+        timedOut = true;
+        controller.abort(new HttpError(504, timeoutMessage));
+      }
+    }, safeTimeoutMs);
+  }
+
+  return {
+    signal: controller.signal,
+    hasTimedOut: () => timedOut,
+    isExternallyAborted: () => externallyAborted || Boolean(externalSignal?.aborted),
+    remainingMs: () => Math.max(1, deadline - Date.now()),
+    throwIfAborted: () => {
+      if (externallyAborted || externalSignal?.aborted) {
+        throw new HttpError(499, 'Request cancelled.');
+      }
+      if (timedOut || Date.now() >= deadline) {
+        timedOut = true;
+        throw new HttpError(504, timeoutMessage);
+      }
+    },
+    cleanup: () => {
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      externalSignal?.removeEventListener('abort', onExternalAbort);
+    },
+  };
+}
+
+async function raceWithTimeoutContext<T>(
+  operation: () => Promise<T>,
+  ctx: TimeoutContext,
+  timeoutMessage: string
+): Promise<T> {
+  ctx.throwIfAborted();
+
+  let abortListener: (() => void) | undefined;
+  const abortPromise = new Promise<never>((_, reject) => {
+    abortListener = () => {
+      if (ctx.isExternallyAborted()) {
+        reject(new HttpError(499, 'Request cancelled.'));
+      } else {
+        reject(new HttpError(504, timeoutMessage));
+      }
+    };
+    ctx.signal.addEventListener('abort', abortListener, { once: true });
+  });
+
+  const operationPromise = Promise.resolve().then(operation);
+  operationPromise.catch(() => {});
+
+  try {
+    return await Promise.race([operationPromise, abortPromise]);
+  } catch (err) {
+    if (ctx.isExternallyAborted()) {
+      throw new HttpError(499, 'Request cancelled.');
+    }
+    if (ctx.hasTimedOut()) {
+      throw new HttpError(504, timeoutMessage);
+    }
+    throw err;
+  } finally {
+    if (abortListener) {
+      ctx.signal.removeEventListener('abort', abortListener);
+    }
+  }
+}
+
+async function waitWithContext(
+  delayMs: number,
+  ctx: TimeoutContext,
+  timeoutMessage: string
+): Promise<void> {
+  ctx.throwIfAborted();
+  const boundedDelay = Math.max(0, Math.min(delayMs, ctx.remainingMs()));
+  if (boundedDelay <= 0) {
+    ctx.throwIfAborted();
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (ctx.isExternallyAborted()) {
+        reject(new HttpError(499, 'Request cancelled.'));
+      } else {
+        reject(new HttpError(504, timeoutMessage));
+      }
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      ctx.signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, boundedDelay);
+    ctx.signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 export function resolveSupportedMimeType(file: UploadedFileInput): string {
   const ext = path.extname(file.originalname).toLowerCase();
   const extMime = EXTENSION_MIME_MAP[ext];
@@ -181,33 +325,66 @@ export function resolveSupportedMimeType(file: UploadedFileInput): string {
   );
 }
 
-async function waitForGeminiFileActive(ai: GoogleGenAI, name: string): Promise<{ uri: string; mimeType?: string }> {
-  const maxAttempts = 40;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const fileInfo = await ai.files.get({ name });
+async function waitForGeminiFileActive(
+  ai: GoogleGenAI,
+  name: string,
+  timeoutCtx: TimeoutContext
+): Promise<{ uri: string; mimeType?: string }> {
+  while (true) {
+    timeoutCtx.throwIfAborted();
+    const fileInfo = await raceWithTimeoutContext(
+      () =>
+        ai.files.get({
+          name,
+          config: {
+            abortSignal: timeoutCtx.signal,
+            httpOptions: { timeout: timeoutCtx.remainingMs() },
+          },
+        }),
+      timeoutCtx,
+      FILE_UPLOAD_TIMEOUT_MESSAGE
+    );
     if (fileInfo.state === 'ACTIVE' && fileInfo.uri) {
       return { uri: fileInfo.uri, mimeType: fileInfo.mimeType };
     }
     if (fileInfo.state === 'FAILED') {
       throw new HttpError(422, 'The uploaded media file could not be processed by Gemini.');
     }
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await waitWithContext(1500, timeoutCtx, FILE_UPLOAD_TIMEOUT_MESSAGE);
   }
-  throw new HttpError(504, 'Timed out while processing the uploaded media file.');
+}
+
+function formatMaxFileSizeLabel(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    const mb = bytes / (1024 * 1024);
+    return Number.isInteger(mb) ? `${mb} MB` : `${mb.toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    const kb = bytes / 1024;
+    return Number.isInteger(kb) ? `${kb} KB` : `${kb.toFixed(1)} KB`;
+  }
+  return `${bytes} bytes`;
 }
 
 async function fileToGeminiPart(
   ai: GoogleGenAI,
   file: UploadedFileInput,
-  uploadedFileNamesToCleanup: string[]
+  uploadedFileNamesToCleanup: string[],
+  fileUploadTimeoutMs: number,
+  signal?: AbortSignal
 ): Promise<Part> {
+  if (signal?.aborted) {
+    throw new HttpError(499, 'Request cancelled.');
+  }
+
   if (file.size <= 0) {
     throw new HttpError(400, `Attached file "${file.originalname}" is empty.`);
   }
-  if (file.size > MAX_FILE_SIZE_BYTES) {
+  const maxFileSizeBytes = protectionConfig.uploads.maxFileSizeBytes;
+  if (file.size > maxFileSizeBytes) {
     throw new HttpError(
       400,
-      `Attached file "${file.originalname}" exceeds the 25 MB limit.`
+      `Attached file "${file.originalname}" exceeds the ${formatMaxFileSizeLabel(maxFileSizeBytes)} limit.`
     );
   }
 
@@ -216,7 +393,13 @@ async function fileToGeminiPart(
   // DOCX extraction via mammoth
   if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
     try {
+      if (signal?.aborted) {
+        throw new HttpError(499, 'Request cancelled.');
+      }
       const result = await mammoth.extractRawText({ path: file.path });
+      if (signal?.aborted) {
+        throw new HttpError(499, 'Request cancelled.');
+      }
       const text = result.value.trim();
       if (!text) {
         throw new HttpError(
@@ -232,6 +415,9 @@ async function fileToGeminiPart(
         text: `[Attached DOCX Document: ${file.originalname}]\n${trimmed}`,
       };
     } catch (err) {
+      if (signal?.aborted) {
+        throw new HttpError(499, 'Request cancelled.');
+      }
       if (err instanceof HttpError) throw err;
       throw new HttpError(
         422,
@@ -248,7 +434,7 @@ async function fileToGeminiPart(
     mimeType === 'application/json'
   ) {
     try {
-      const raw = await fs.readFile(file.path, 'utf8');
+      const raw = await fs.readFile(file.path, { encoding: 'utf8', signal });
       const cleaned = raw.replace(/\u0000/g, '').trim();
       if (!cleaned) {
         throw new HttpError(422, `Document "${file.originalname}" contains no readable text.`);
@@ -261,6 +447,9 @@ async function fileToGeminiPart(
         text: `[Attached Document: ${file.originalname} (${mimeType})]\n${trimmed}`,
       };
     } catch (err) {
+      if (signal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        throw new HttpError(499, 'Request cancelled.');
+      }
       if (err instanceof HttpError) throw err;
       throw new HttpError(422, `Failed to read text document "${file.originalname}".`);
     }
@@ -268,46 +457,70 @@ async function fileToGeminiPart(
 
   // Images and small PDFs via inlineData for low-latency processing
   if ((mimeType.startsWith('image/') || mimeType === 'application/pdf') && file.size < INLINE_THRESHOLD_BYTES) {
-    const buffer = await fs.readFile(file.path);
-    return {
-      inlineData: {
-        mimeType,
-        data: buffer.toString('base64'),
-      },
-    };
+    try {
+      const buffer = await fs.readFile(file.path, { signal });
+      return {
+        inlineData: {
+          mimeType,
+          data: buffer.toString('base64'),
+        },
+      };
+    } catch (err) {
+      if (signal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
+        throw new HttpError(499, 'Request cancelled.');
+      }
+      throw err;
+    }
   }
 
   // Videos and larger PDFs via Gemini Files API
-  const uploaded = await ai.files.upload({
-    file: file.path,
-    config: {
-      mimeType,
-      displayName: file.originalname,
-    },
-  });
+  const uploadTimeout = createTimeoutContext(
+    fileUploadTimeoutMs,
+    FILE_UPLOAD_TIMEOUT_MESSAGE,
+    signal
+  );
 
-  if (!uploaded.name) {
-    throw new HttpError(502, `Failed to register "${file.originalname}" with Gemini File API.`);
+  try {
+    const uploaded = await raceWithTimeoutContext(
+      () =>
+        ai.files.upload({
+          file: file.path,
+          config: {
+            mimeType,
+            displayName: file.originalname,
+            abortSignal: uploadTimeout.signal,
+            httpOptions: { timeout: uploadTimeout.remainingMs() },
+          },
+        }),
+      uploadTimeout,
+      FILE_UPLOAD_TIMEOUT_MESSAGE
+    );
+
+    if (!uploaded.name) {
+      throw new HttpError(502, `Failed to register "${file.originalname}" with Gemini File API.`);
+    }
+    uploadedFileNamesToCleanup.push(uploaded.name);
+
+    let uri = uploaded.uri;
+    let resolvedMime = uploaded.mimeType || mimeType;
+
+    if (uploaded.state === 'PROCESSING' || !uri) {
+      const active = await waitForGeminiFileActive(ai, uploaded.name, uploadTimeout);
+      uri = active.uri;
+      resolvedMime = active.mimeType || resolvedMime;
+    } else if (uploaded.state === 'FAILED') {
+      throw new HttpError(422, `Processing failed for "${file.originalname}".`);
+    }
+
+    return {
+      fileData: {
+        fileUri: uri,
+        mimeType: resolvedMime,
+      },
+    };
+  } finally {
+    uploadTimeout.cleanup();
   }
-  uploadedFileNamesToCleanup.push(uploaded.name);
-
-  let uri = uploaded.uri;
-  let resolvedMime = uploaded.mimeType || mimeType;
-
-  if (uploaded.state === 'PROCESSING' || !uri) {
-    const active = await waitForGeminiFileActive(ai, uploaded.name);
-    uri = active.uri;
-    resolvedMime = active.mimeType || resolvedMime;
-  } else if (uploaded.state === 'FAILED') {
-    throw new HttpError(422, `Processing failed for "${file.originalname}".`);
-  }
-
-  return {
-    fileData: {
-      fileUri: uri,
-      mimeType: resolvedMime,
-    },
-  };
 }
 
 function buildConversationContents(
@@ -497,42 +710,126 @@ function isRetryableTransientError(err: unknown): boolean {
   );
 }
 
+function extractUpstreamHttpStatus(error: unknown, rawMessage: string): number | undefined {
+  if (typeof error === 'object' && error !== null) {
+    if ('status' in error) {
+      const status = (error as { status?: unknown }).status;
+      if (typeof status === 'number' && Number.isInteger(status)) {
+        return status;
+      }
+    }
+    if ('statusCode' in error) {
+      const statusCode = (error as { statusCode?: unknown }).statusCode;
+      if (typeof statusCode === 'number' && Number.isInteger(statusCode)) {
+        return statusCode;
+      }
+    }
+  }
+
+  const jsonStart = rawMessage.indexOf('{');
+  const jsonEnd = rawMessage.lastIndexOf('}');
+  if (jsonStart !== -1 && jsonEnd > jsonStart) {
+    try {
+      const parsed = JSON.parse(rawMessage.slice(jsonStart, jsonEnd + 1)) as {
+        error?: { code?: unknown };
+      };
+      const code = parsed?.error?.code;
+      if (typeof code === 'number' && Number.isInteger(code)) {
+        return code;
+      }
+    } catch {
+      // Ignore unparseable message fragments
+    }
+  }
+
+  return undefined;
+}
+
+const GENERIC_GEMINI_ERROR_MESSAGE =
+  'An unexpected error occurred while generating the AI response. Please try again.';
+
 export function formatGeminiError(error: unknown): { statusCode: number; message: string } {
   if (error instanceof HttpError) {
     return { statusCode: error.statusCode, message: error.message };
   }
 
-  const rawMessage = error instanceof Error ? error.message : String(error);
+  const rawMessage = error instanceof Error ? error.message : String(error ?? '');
   const lower = rawMessage.toLowerCase();
+  const upstreamStatus = extractUpstreamHttpStatus(error, rawMessage);
 
-  if (lower.includes('api_key_invalid') || lower.includes('api key not valid') || lower.includes('permission_denied') || lower.includes('403')) {
-    return {
-      statusCode: 403,
-      message: 'The server Gemini API key is invalid or lacks permission. Please verify GEMINI_API_KEY in Settings > Secrets.',
-    };
-  }
-  if (lower.includes('resource_exhausted') || lower.includes('429') || lower.includes('quota')) {
+  if (
+    upstreamStatus === 429 ||
+    /\b429\b/.test(lower) ||
+    lower.includes('resource_exhausted') ||
+    lower.includes('quota')
+  ) {
     return {
       statusCode: 429,
       message: 'Rate limit or quota reached for Gemini API. Please wait a moment and try again.',
     };
   }
-  if (lower.includes('not_found') || lower.includes('404')) {
+  if (
+    upstreamStatus === 401 ||
+    /\b401\b/.test(lower) ||
+    lower.includes('unauthenticated')
+  ) {
+    return {
+      statusCode: 502,
+      message: 'The AI service could not authenticate the server request. Please try again later.',
+    };
+  }
+  if (
+    upstreamStatus === 403 ||
+    /\b403\b/.test(lower) ||
+    lower.includes('api_key_invalid') ||
+    lower.includes('api key not valid') ||
+    lower.includes('permission_denied')
+  ) {
+    return {
+      statusCode: 403,
+      message: 'The server Gemini API key is invalid or lacks permission. Please verify GEMINI_API_KEY in Settings > Secrets.',
+    };
+  }
+  if (upstreamStatus === 404 || /\b404\b/.test(lower) || lower.includes('not_found')) {
     return {
       statusCode: 502,
       message: 'The configured Gemini model could not be reached. Please try again.',
     };
   }
-  if (lower.includes('400') || lower.includes('invalid_argument')) {
+  if (upstreamStatus === 400 || /\b400\b/.test(lower) || lower.includes('invalid_argument')) {
     return {
       statusCode: 400,
       message: 'The request or uploaded file format could not be processed by Gemini. Please verify your files and prompt.',
     };
   }
+  if (upstreamStatus === 503 || /\b503\b/.test(lower) || lower.includes('unavailable')) {
+    return {
+      statusCode: 503,
+      message: 'The AI service is temporarily unavailable. Please wait a moment and try again.',
+    };
+  }
+  if (upstreamStatus === 504 || /\b504\b/.test(lower) || lower.includes('deadline_exceeded')) {
+    return {
+      statusCode: 504,
+      message: 'The AI service took too long to respond. Please try again.',
+    };
+  }
+  if (upstreamStatus === 502 || /\b502\b/.test(lower) || lower.includes('bad gateway')) {
+    return {
+      statusCode: 502,
+      message: 'The AI service is temporarily unreachable. Please try again.',
+    };
+  }
+  if (upstreamStatus === 500 || /\b500\b/.test(lower)) {
+    return {
+      statusCode: 500,
+      message: GENERIC_GEMINI_ERROR_MESSAGE,
+    };
+  }
 
   return {
     statusCode: 500,
-    message: rawMessage || 'An unexpected error occurred while generating the AI response.',
+    message: GENERIC_GEMINI_ERROR_MESSAGE,
   };
 }
 
@@ -544,9 +841,14 @@ export async function streamGeminiChat(params: {
   signal?: AbortSignal;
   onStatus: (phase: 'processing_files' | 'searching' | 'generating') => void;
   onDelta: (text: string) => void;
+  timeouts?: { chatMs?: number; fileUploadMs?: number };
+  client?: GoogleGenAI;
 }): Promise<GroundingResult> {
-  const ai = getGeminiClient();
+  const ai = params.client ?? getGeminiClient();
   const uploadedFileNamesToCleanup: string[] = [];
+  const fileUploadTimeoutMs =
+    params.timeouts?.fileUploadMs ?? protectionConfig.timeouts.fileUploadMs;
+  const chatTimeoutMs = params.timeouts?.chatMs ?? protectionConfig.timeouts.chatMs;
 
   try {
     const fileParts: Part[] = [];
@@ -556,9 +858,19 @@ export async function streamGeminiChat(params: {
         if (params.signal?.aborted) {
           throw new HttpError(499, 'Request cancelled.');
         }
-        const part = await fileToGeminiPart(ai, file, uploadedFileNamesToCleanup);
+        const part = await fileToGeminiPart(
+          ai,
+          file,
+          uploadedFileNamesToCleanup,
+          fileUploadTimeoutMs,
+          params.signal
+        );
         fileParts.push(part);
       }
+    }
+
+    if (params.signal?.aborted) {
+      throw new HttpError(499, 'Request cancelled.');
     }
 
     const shouldSearch = decideShouldUseWebSearch(params.message, params.webSearch);
@@ -576,94 +888,136 @@ export async function streamGeminiChat(params: {
       shouldSearch,
     });
 
-    const config: GenerateContentConfig = {
+    const baseConfig: GenerateContentConfig = {
       systemInstruction: SYSTEM_INSTRUCTION,
       thinkingConfig: { thinkingLevel },
       ...(shouldSearch ? { tools: [{ googleSearch: {} }] } : {}),
     };
 
-    let stream;
+    const chatTimeout = createTimeoutContext(chatTimeoutMs, CHAT_TIMEOUT_MESSAGE, params.signal);
+    let streamIterator: AsyncIterator<Awaited<ReturnType<typeof ai.models.generateContentStream>> extends AsyncIterable<infer T> ? T : never> | undefined;
+    let streamCompleted = false;
+
     try {
-      stream = await ai.models.generateContentStream({
-        model: 'gemini-4-hydrogen',
-        contents,
-        config,
-      });
-    } catch (firstErr) {
-      if (!isRetryableTransientError(firstErr) || params.signal?.aborted) {
-        throw firstErr;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-      if (params.signal?.aborted) {
-        throw new HttpError(499, 'Request cancelled.');
-      }
-      stream = await ai.models.generateContentStream({
-        model: 'gemini-4-hydrogen',
-        contents,
-        config,
-      });
-    }
+      const callGenerateStream = () =>
+        ai.models.generateContentStream({
+          model: 'gemini-4-hydrogen',
+          contents,
+          config: {
+            ...baseConfig,
+            abortSignal: chatTimeout.signal,
+            httpOptions: { timeout: chatTimeout.remainingMs() },
+          },
+        });
 
-    const querySet = new Set<string>();
-    const sourceMap = new Map<string, GroundingSource>();
-    let sentGeneratingStatus = !shouldSearch;
-
-    for await (const chunk of stream) {
-      if (params.signal?.aborted) {
-        break;
-      }
-
-      const chunkText = chunk.text;
-      if (chunkText) {
-        if (!sentGeneratingStatus) {
-          params.onStatus('generating');
-          sentGeneratingStatus = true;
+      let stream;
+      try {
+        stream = await raceWithTimeoutContext(callGenerateStream, chatTimeout, CHAT_TIMEOUT_MESSAGE);
+      } catch (firstErr) {
+        if (
+          chatTimeout.hasTimedOut() ||
+          chatTimeout.isExternallyAborted() ||
+          !isRetryableTransientError(firstErr)
+        ) {
+          throw firstErr;
         }
-        params.onDelta(chunkText);
+        await waitWithContext(1200, chatTimeout, CHAT_TIMEOUT_MESSAGE);
+        stream = await raceWithTimeoutContext(callGenerateStream, chatTimeout, CHAT_TIMEOUT_MESSAGE);
       }
 
-      const metadata = chunk.candidates?.[0]?.groundingMetadata;
-      if (metadata) {
-        if (Array.isArray(metadata.webSearchQueries)) {
-          for (const q of metadata.webSearchQueries) {
-            if (typeof q === 'string' && q.trim()) {
-              querySet.add(q.trim());
+      const querySet = new Set<string>();
+      const sourceMap = new Map<string, GroundingSource>();
+      let sentGeneratingStatus = !shouldSearch;
+
+      streamIterator = stream[Symbol.asyncIterator]();
+      while (true) {
+        if (chatTimeout.isExternallyAborted()) {
+          throw new HttpError(499, 'Request cancelled.');
+        }
+
+        const next = await raceWithTimeoutContext(
+          () => streamIterator!.next(),
+          chatTimeout,
+          CHAT_STREAM_TIMEOUT_MESSAGE
+        );
+        if (next.done) {
+          streamCompleted = true;
+          break;
+        }
+
+        const chunk = next.value;
+        if (chatTimeout.isExternallyAborted()) {
+          throw new HttpError(499, 'Request cancelled.');
+        }
+
+        const chunkText = chunk.text;
+        if (chunkText) {
+          if (!sentGeneratingStatus) {
+            params.onStatus('generating');
+            sentGeneratingStatus = true;
+          }
+          params.onDelta(chunkText);
+        }
+
+        const metadata = chunk.candidates?.[0]?.groundingMetadata;
+        if (metadata) {
+          if (Array.isArray(metadata.webSearchQueries)) {
+            for (const q of metadata.webSearchQueries) {
+              if (typeof q === 'string' && q.trim()) {
+                querySet.add(q.trim());
+              }
             }
           }
-        }
-        if (Array.isArray(metadata.groundingChunks)) {
-          for (const gChunk of metadata.groundingChunks) {
-            const web = gChunk.web;
-            if (web?.uri && /^https?:\/\//i.test(web.uri)) {
-              if (!sourceMap.has(web.uri)) {
-                const domain = extractDomain(web.uri);
-                sourceMap.set(web.uri, {
-                  title: (web.title || domain).trim(),
-                  uri: web.uri,
-                  domain,
-                });
+          if (Array.isArray(metadata.groundingChunks)) {
+            for (const gChunk of metadata.groundingChunks) {
+              const web = gChunk.web;
+              if (web?.uri && /^https?:\/\//i.test(web.uri)) {
+                if (!sourceMap.has(web.uri)) {
+                  const domain = extractDomain(web.uri);
+                  sourceMap.set(web.uri, {
+                    title: (web.title || domain).trim(),
+                    uri: web.uri,
+                    domain,
+                  });
+                }
               }
             }
           }
         }
       }
+
+      if (chatTimeout.isExternallyAborted()) {
+        throw new HttpError(499, 'Request cancelled.');
+      }
+
+      const sources = Array.from(sourceMap.values());
+      const searchQueries = Array.from(querySet);
+
+      return {
+        enabled: shouldSearch,
+        used: sources.length > 0 || searchQueries.length > 0,
+        searchQueries,
+        sources,
+      };
+    } finally {
+      chatTimeout.cleanup();
+      if (!streamCompleted && streamIterator?.return) {
+        streamIterator.return().catch(() => {});
+      }
     }
-
-    const sources = Array.from(sourceMap.values());
-    const searchQueries = Array.from(querySet);
-
-    return {
-      enabled: shouldSearch,
-      used: sources.length > 0 || searchQueries.length > 0,
-      searchQueries,
-      sources,
-    };
   } finally {
-    // Best-effort cleanup of temporary Gemini Files API uploads
+    // Best-effort cleanup of temporary Gemini Files API uploads (not bound to aborted client signal)
     for (const fileName of uploadedFileNamesToCleanup) {
-      ai.files.delete({ name: fileName }).catch(() => {
-        // Ignore cleanup failures
-      });
+      ai.files
+        .delete({
+          name: fileName,
+          config: {
+            httpOptions: { timeout: 10_000 },
+          },
+        })
+        .catch(() => {
+          // Ignore cleanup failures
+        });
     }
   }
 }
@@ -672,6 +1026,9 @@ export async function generateFollowUpSuggestions(params: {
   userMessage: string;
   assistantMessage: string;
   contentType?: string | null;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  client?: GoogleGenAI;
 }): Promise<string[]> {
   const userText = params.userMessage.trim();
   const assistantText = params.assistantMessage.trim();
@@ -683,39 +1040,56 @@ export async function generateFollowUpSuggestions(params: {
   if (userText && PURE_GREETING_OR_CASUAL_REGEX.test(userText)) {
     return [];
   }
+  if (params.signal?.aborted) {
+    return [];
+  }
+
+  const timeoutMs = params.timeoutMs ?? protectionConfig.timeouts.followupMs;
+  const timeoutCtx = createTimeoutContext(timeoutMs, FOLLOWUP_TIMEOUT_MESSAGE, params.signal);
 
   try {
-    const ai = getGeminiClient();
+    const ai = params.client ?? getGeminiClient();
     const snippet = assistantText.slice(0, 900);
     const contentHint = params.contentType
       ? `The assistant just produced a structured deliverable of type "${params.contentType}". Suggest practical editing, refinement, or variation actions tailored to that deliverable.`
       : 'Suggest 2 to 4 natural, directly relevant next questions or refinement actions based on the conversation.';
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
-      contents: `User message:\n${userText || '(Attached file analysis)'}\n\nAssistant response excerpt:\n${snippet}`,
-      config: {
-        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-        systemInstruction: `Generate 2 to 4 concise follow-up questions or next-step action prompts that the user can click to continue this exact conversation.
+    const response = await raceWithTimeoutContext(
+      () =>
+        ai.models.generateContent({
+          model: 'gemini-4-hydrogen',
+          contents: `User message:\n${userText || '(Attached file analysis)'}\n\nAssistant response excerpt:\n${snippet}`,
+          config: {
+            abortSignal: timeoutCtx.signal,
+            httpOptions: { timeout: timeoutCtx.remainingMs() },
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            systemInstruction: `Generate 2 to 4 concise follow-up questions or next-step action prompts that the user can click to continue this exact conversation.
 Rules:
 - Match the primary language of the conversation (use Burmese if the conversation is in Burmese, English if in English).
 - Keep each suggestion short and natural (under 10 words, no numbering, no quotes).
 - ${contentHint}
 - Never include generic filler unrelated to the conversation.`,
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            suggestions: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: '2 to 4 concise, contextual follow-up prompts.',
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                suggestions: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: '2 to 4 concise, contextual follow-up prompts.',
+                },
+              },
+              required: ['suggestions'],
             },
           },
-          required: ['suggestions'],
-        },
-      },
-    });
+        }),
+      timeoutCtx,
+      FOLLOWUP_TIMEOUT_MESSAGE
+    );
+
+    if (timeoutCtx.isExternallyAborted()) {
+      return [];
+    }
 
     const raw = (response.text ?? '').trim();
     if (!raw) return [];
@@ -727,7 +1101,18 @@ Rules:
       .map((item) => item.trim())
       .slice(0, 4);
   } catch (err) {
+    if (err instanceof HttpError && err.statusCode === 504) {
+      throw err;
+    }
+    if (
+      timeoutCtx.isExternallyAborted() ||
+      (err instanceof HttpError && err.statusCode === 499)
+    ) {
+      return [];
+    }
     logSanitizedGeminiError('/api/followups', err);
     return [];
+  } finally {
+    timeoutCtx.cleanup();
   }
 }

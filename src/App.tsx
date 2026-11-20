@@ -33,6 +33,11 @@ import {
   streamChatCompletion,
   toChatApiError,
 } from './lib/api';
+import {
+  isChatSubmissionInFlight,
+  releaseChatSubmission,
+  tryAcquireChatSubmission,
+} from './lib/submissionGuard';
 import { detectContentBlockType } from './lib/contentDetector';
 import { AuthScreen } from './components/AuthScreen';
 import { ChatComposer } from './components/ChatComposer';
@@ -45,10 +50,11 @@ import { WelcomeScreen } from './components/WelcomeScreen';
 // Disabled by default to keep each chat turn to a single primary Gemini API request.
 const AUTO_FOLLOWUP_SUGGESTIONS_ENABLED = false;
 
-function createBlankConversation(): Conversation {
+function createBlankConversation(ownerUid?: string): Conversation {
   const now = Date.now();
   return {
     id: `conv-${now}-${Math.random().toString(36).slice(2, 8)}`,
+    ...(ownerUid ? { ownerUid } : {}),
     title: 'New Conversation',
     createdAt: now,
     updatedAt: now,
@@ -88,34 +94,79 @@ export default function App() {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const userScrolledUpRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const submissionLockRef = useRef<symbol | null>(null);
+  const activeUidRef = useRef<string | null>(null);
   const sessionFileCacheRef = useRef<Map<string, File[]>>(new Map());
   const dragDepthRef = useRef(0);
+
+  const resetAccountSessionState = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    releaseChatSubmission(submissionLockRef);
+    setIsStreaming(false);
+    sessionFileCacheRef.current.clear();
+    setConversations([]);
+    setActiveId('');
+    setIsStorageReady(false);
+    setInput('');
+    setAttachments((prev) => {
+      for (const att of prev) {
+        if (att.previewUrl?.startsWith('blob:')) {
+          URL.revokeObjectURL(att.previewUrl);
+        }
+      }
+      return [];
+    });
+    setAttachmentError(null);
+    setLightboxMedia(null);
+    setShowScrollBottom(false);
+    setIsDraggingFile(false);
+    dragDepthRef.current = 0;
+    userScrolledUpRef.current = false;
+  }, []);
 
   // Monitor Firebase Authentication session state
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      const nextUid = firebaseUser?.uid ?? null;
+      if (activeUidRef.current !== nextUid) {
+        activeUidRef.current = nextUid;
+        resetAccountSessionState();
+      }
       setUser(firebaseUser);
       setIsAuthLoading(false);
     });
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [resetAccountSessionState]);
 
   // Load persisted conversations & check backend health once authenticated
   useEffect(() => {
-    if (!user) return;
-    let active = true;
+    const uid = user?.uid ?? null;
+    if (!uid) {
+      activeUidRef.current = null;
+      resetAccountSessionState();
+      return;
+    }
 
-    loadAllConversations().then((loaded) => {
-      if (!active) return;
+    let active = true;
+    activeUidRef.current = uid;
+    setConversations([]);
+    setActiveId('');
+    setIsStorageReady(false);
+
+    loadAllConversations(uid).then((loaded) => {
+      if (!active || activeUidRef.current !== uid) return;
       if (loaded.length > 0) {
         setConversations(loaded);
         setActiveId((prev) =>
           prev && loaded.some((c) => c.id === prev) ? prev : loaded[0].id
         );
       } else {
-        const fresh = createBlankConversation();
+        const fresh = createBlankConversation(uid);
         setConversations([fresh]);
         setActiveId(fresh.id);
       }
@@ -124,16 +175,20 @@ export default function App() {
 
     fetchHealthStatus()
       .then((health) => {
-        if (active) setApiKeyConfigured(health.apiKeyConfigured);
+        if (active && activeUidRef.current === uid) {
+          setApiKeyConfigured(health.apiKeyConfigured);
+        }
       })
       .catch(() => {
-        if (active) setApiKeyConfigured(true);
+        if (active && activeUidRef.current === uid) {
+          setApiKeyConfigured(true);
+        }
       });
 
     return () => {
       active = false;
     };
-  }, [user?.uid]);
+  }, [user?.uid, resetAccountSessionState]);
 
   const activeConversation = useMemo(() => {
     return conversations.find((c) => c.id === activeId) ?? conversations[0] ?? null;
@@ -164,19 +219,31 @@ export default function App() {
   }, [activeConversation?.messages.length, activeConversation?.messages[activeConversation.messages.length - 1]?.content, isStreaming, scrollToBottom]);
 
   const updateConversation = useCallback(
-    (convId: string, updater: (prev: Conversation) => Conversation, persist = true) => {
+    (
+      convId: string,
+      updater: (prev: Conversation) => Conversation,
+      persist = true,
+      expectedUid: string | null = activeUidRef.current
+    ) => {
+      if (!expectedUid || activeUidRef.current !== expectedUid) {
+        return;
+      }
       setConversations((prevList) => {
+        if (activeUidRef.current !== expectedUid) {
+          return prevList;
+        }
         let updatedConv: Conversation | null = null;
         const nextList = prevList.map((conv) => {
-          if (conv.id === convId) {
-            updatedConv = updater(conv);
+          if (conv.id === convId && (!conv.ownerUid || conv.ownerUid === expectedUid)) {
+            const next = updater(conv);
+            updatedConv = { ...next, ownerUid: expectedUid };
             return updatedConv;
           }
           return conv;
         });
         nextList.sort((a, b) => b.updatedAt - a.updatedAt);
-        if (persist && updatedConv) {
-          saveConversation(updatedConv);
+        if (persist && updatedConv && activeUidRef.current === expectedUid) {
+          void saveConversation(expectedUid, updatedConv);
         }
         return nextList;
       });
@@ -185,15 +252,19 @@ export default function App() {
   );
 
   const handleNewChat = useCallback(() => {
-    if (isStreaming) {
+    if (isStreaming || isChatSubmissionInFlight(submissionLockRef)) {
       abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+      releaseChatSubmission(submissionLockRef);
       setIsStreaming(false);
     }
     const current = conversations.find((c) => c.id === activeId);
     if (current && current.messages.length === 0) {
       return;
     }
-    const fresh = createBlankConversation();
+    const uid = activeUidRef.current;
+    if (!uid) return;
+    const fresh = createBlankConversation(uid);
     setConversations((prev) => [fresh, ...prev]);
     setActiveId(fresh.id);
     setInput('');
@@ -204,8 +275,10 @@ export default function App() {
 
   const handleSelectConversation = useCallback(
     (id: string) => {
-      if (isStreaming) {
+      if (isStreaming || isChatSubmissionInFlight(submissionLockRef)) {
         abortControllerRef.current?.abort();
+        abortControllerRef.current = null;
+        releaseChatSubmission(submissionLockRef);
         setIsStreaming(false);
       }
       setActiveId(id);
@@ -228,15 +301,20 @@ export default function App() {
 
   const handleDeleteConversation = useCallback(
     (id: string) => {
-      if (isStreaming && id === activeId) {
+      if ((isStreaming || isChatSubmissionInFlight(submissionLockRef)) && id === activeId) {
         abortControllerRef.current?.abort();
+        abortControllerRef.current = null;
+        releaseChatSubmission(submissionLockRef);
         setIsStreaming(false);
       }
-      removeConversation(id);
+      const uid = activeUidRef.current;
+      if (uid) {
+        void removeConversation(uid, id);
+      }
       setConversations((prev) => {
         const remaining = prev.filter((c) => c.id !== id);
         if (remaining.length === 0) {
-          const fresh = createBlankConversation();
+          const fresh = createBlankConversation(uid ?? undefined);
           setActiveId(fresh.id);
           return [fresh];
         }
@@ -286,12 +364,14 @@ export default function App() {
 
   const executeStreamTurn = useCallback(
     async (params: {
+      ownerUid: string;
       conversationId: string;
       history: ChatMessage[];
       userPrompt: string;
       files: File[];
       assistantMsgId: string;
       useWebSearch: boolean;
+      submissionToken: symbol;
     }) => {
       const controller = new AbortController();
       abortControllerRef.current = controller;
@@ -315,7 +395,8 @@ export default function App() {
                   m.id === params.assistantMsgId ? { ...m, streamPhase: phase } : m
                 ),
               }),
-              false
+              false,
+              params.ownerUid
             );
           },
           onDelta: (delta) => {
@@ -330,7 +411,8 @@ export default function App() {
                     : m
                 ),
               }),
-              false
+              false,
+              params.ownerUid
             );
           },
           onDone: (grounding) => {
@@ -351,7 +433,8 @@ export default function App() {
                     : m
                 ),
               }),
-              true
+              true,
+              params.ownerUid
             );
 
             if (
@@ -381,7 +464,8 @@ export default function App() {
                         : m
                     ),
                   }),
-                  true
+                  true,
+                  params.ownerUid
                 );
               });
             }
@@ -405,7 +489,8 @@ export default function App() {
                   : m
               ),
             }),
-            true
+            true,
+            params.ownerUid
           );
         } else {
           const apiError = toChatApiError(err);
@@ -427,14 +512,21 @@ export default function App() {
                   : m
               ),
             }),
-            true
+            true,
+            params.ownerUid
           );
         }
       } finally {
         if (abortControllerRef.current === controller) {
           abortControllerRef.current = null;
         }
-        setIsStreaming(false);
+        if (
+          submissionLockRef.current === null ||
+          submissionLockRef.current === params.submissionToken
+        ) {
+          releaseChatSubmission(submissionLockRef, params.submissionToken);
+          setIsStreaming(false);
+        }
       }
     },
     [updateConversation]
@@ -442,7 +534,15 @@ export default function App() {
 
   const handleSendMessage = useCallback(
     async (overridePrompt?: string, overrideWebSearch?: boolean) => {
-      if (!activeConversation || isStreaming) return;
+      const ownerUid = activeUidRef.current;
+      if (
+        !ownerUid ||
+        !activeConversation ||
+        isStreaming ||
+        isChatSubmissionInFlight(submissionLockRef)
+      ) {
+        return;
+      }
 
       const promptText = typeof overridePrompt === 'string' ? overridePrompt : input;
       const trimmedPrompt = promptText.trim();
@@ -464,79 +564,89 @@ export default function App() {
         return;
       }
 
-      const convId = activeConversation.id;
-      const priorMessages = activeConversation.messages.filter(
-        (m) => !m.error && !m.isStreaming
-      );
+      const submissionToken = tryAcquireChatSubmission(submissionLockRef, isStreaming);
+      if (!submissionToken) return;
 
-      const messageAttachments: MessageAttachment[] = pending.map((att) => ({
-        id: att.id,
-        name: att.name,
-        size: att.size,
-        mimeType: att.mimeType,
-        kind: att.kind,
-        previewUrl: att.previewUrl,
-      }));
+      try {
+        const convId = activeConversation.id;
+        const priorMessages = activeConversation.messages.filter(
+          (m) => !m.error && !m.isStreaming
+        );
 
-      const userMsgId = `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      const assistantMsgId = `msg-ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const messageAttachments: MessageAttachment[] = pending.map((att) => ({
+          id: att.id,
+          name: att.name,
+          size: att.size,
+          mimeType: att.mimeType,
+          kind: att.kind,
+          previewUrl: att.previewUrl,
+        }));
 
-      if (filesToSend.length > 0) {
-        sessionFileCacheRef.current.set(userMsgId, filesToSend);
+        const userMsgId = `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const assistantMsgId = `msg-ai-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+        if (filesToSend.length > 0) {
+          sessionFileCacheRef.current.set(userMsgId, filesToSend);
+        }
+
+        const userMessage: ChatMessage = {
+          id: userMsgId,
+          role: 'user',
+          content: trimmedPrompt,
+          createdAt: Date.now(),
+          ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
+        };
+
+        const assistantPlaceholder: ChatMessage = {
+          id: assistantMsgId,
+          role: 'assistant',
+          content: '',
+          createdAt: Date.now(),
+          isStreaming: true,
+          streamPhase: filesToSend.length > 0 ? 'processing_files' : 'generating',
+        };
+
+        const shouldAutoTitle =
+          activeConversation.messages.length === 0 &&
+          activeConversation.title === 'New Conversation';
+
+        updateConversation(
+          convId,
+          (conv) => ({
+            ...conv,
+            title: shouldAutoTitle
+              ? deriveConversationTitle(
+                  promptText,
+                  messageAttachments.map((a) => a.name)
+                )
+              : conv.title,
+            updatedAt: Date.now(),
+            messages: [...conv.messages, userMessage, assistantPlaceholder],
+          }),
+          true,
+          ownerUid
+        );
+
+        if (typeof overridePrompt !== 'string') {
+          setInput('');
+          setAttachments([]);
+        }
+        setAttachmentError(null);
+        userScrolledUpRef.current = false;
+
+        await executeStreamTurn({
+          ownerUid,
+          conversationId: convId,
+          history: priorMessages,
+          userPrompt: trimmedPrompt,
+          files: filesToSend,
+          assistantMsgId,
+          useWebSearch: useSearch,
+          submissionToken,
+        });
+      } finally {
+        releaseChatSubmission(submissionLockRef, submissionToken);
       }
-
-      const userMessage: ChatMessage = {
-        id: userMsgId,
-        role: 'user',
-        content: trimmedPrompt,
-        createdAt: Date.now(),
-        ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
-      };
-
-      const assistantPlaceholder: ChatMessage = {
-        id: assistantMsgId,
-        role: 'assistant',
-        content: '',
-        createdAt: Date.now(),
-        isStreaming: true,
-        streamPhase: filesToSend.length > 0 ? 'processing_files' : 'generating',
-      };
-
-      const shouldAutoTitle =
-        activeConversation.messages.length === 0 &&
-        activeConversation.title === 'New Conversation';
-
-      updateConversation(
-        convId,
-        (conv) => ({
-          ...conv,
-          title: shouldAutoTitle
-            ? deriveConversationTitle(
-                promptText,
-                messageAttachments.map((a) => a.name)
-              )
-            : conv.title,
-          updatedAt: Date.now(),
-          messages: [...conv.messages, userMessage, assistantPlaceholder],
-        }),
-        true
-      );
-
-      if (typeof overridePrompt !== 'string') {
-        setInput('');
-        setAttachments([]);
-      }
-      setAttachmentError(null);
-      userScrolledUpRef.current = false;
-
-      await executeStreamTurn({
-        conversationId: convId,
-        history: priorMessages,
-        userPrompt: trimmedPrompt,
-        files: filesToSend,
-        assistantMsgId,
-        useWebSearch: useSearch,
-      });
     },
     [
       activeConversation,
@@ -550,7 +660,15 @@ export default function App() {
   );
 
   const handleRetryLastAssistant = useCallback(async () => {
-    if (!activeConversation || isStreaming) return;
+    const ownerUid = activeUidRef.current;
+    if (
+      !ownerUid ||
+      !activeConversation ||
+      isStreaming ||
+      isChatSubmissionInFlight(submissionLockRef)
+    ) {
+      return;
+    }
     const msgs = activeConversation.messages;
     if (msgs.length < 2) return;
 
@@ -613,40 +731,50 @@ export default function App() {
       return;
     }
 
-    const priorHistory = msgs.slice(0, -2).filter((m) => !m.error && !m.isStreaming);
-    const assistantMsgId = lastMsg.id;
+    const submissionToken = tryAcquireChatSubmission(submissionLockRef, isStreaming);
+    if (!submissionToken) return;
 
-    updateConversation(
-      activeConversation.id,
-      (conv) => ({
-        ...conv,
-        messages: conv.messages.map((m) =>
-          m.id === assistantMsgId
-            ? {
-                ...m,
-                content: '',
-                error: undefined,
-                errorKind: undefined,
-                grounding: undefined,
-                followUpSuggestions: undefined,
-                isStreaming: true,
-                streamPhase:
-                  cachedFiles.length > 0 ? 'processing_files' : 'generating',
-              }
-            : m
-        ),
-      }),
-      false
-    );
+    try {
+      const priorHistory = msgs.slice(0, -2).filter((m) => !m.error && !m.isStreaming);
+      const assistantMsgId = lastMsg.id;
 
-    await executeStreamTurn({
-      conversationId: activeConversation.id,
-      history: priorHistory,
-      userPrompt: userMsg.content,
-      files: cachedFiles,
-      assistantMsgId,
-      useWebSearch: webSearch,
-    });
+      updateConversation(
+        activeConversation.id,
+        (conv) => ({
+          ...conv,
+          messages: conv.messages.map((m) =>
+            m.id === assistantMsgId
+              ? {
+                  ...m,
+                  content: '',
+                  error: undefined,
+                  errorKind: undefined,
+                  grounding: undefined,
+                  followUpSuggestions: undefined,
+                  isStreaming: true,
+                  streamPhase:
+                    cachedFiles.length > 0 ? 'processing_files' : 'generating',
+                }
+              : m
+          ),
+        }),
+        false,
+        ownerUid
+      );
+
+      await executeStreamTurn({
+        ownerUid,
+        conversationId: activeConversation.id,
+        history: priorHistory,
+        userPrompt: userMsg.content,
+        files: cachedFiles,
+        assistantMsgId,
+        useWebSearch: webSearch,
+        submissionToken,
+      });
+    } finally {
+      releaseChatSubmission(submissionLockRef, submissionToken);
+    }
   }, [activeConversation, executeStreamTurn, isStreaming, updateConversation, webSearch]);
 
   const handleStopStreaming = useCallback(() => {
@@ -656,30 +784,28 @@ export default function App() {
   const handleSignOut = useCallback(async () => {
     if (isSigningOut) return;
     setIsSigningOut(true);
+    const previousUid = activeUidRef.current;
     try {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-        abortControllerRef.current = null;
-      }
-      setIsStreaming(false);
-      setInput('');
-      setAttachments((prev) => {
-        for (const att of prev) {
-          if (att.previewUrl?.startsWith('blob:')) {
-            URL.revokeObjectURL(att.previewUrl);
-          }
-        }
-        return [];
-      });
-      setAttachmentError(null);
-      setLightboxMedia(null);
+      activeUidRef.current = null;
+      resetAccountSessionState();
       await signOut(auth);
     } catch (err) {
       console.error('Sign out failed:', err);
+      const currentUid = auth.currentUser?.uid ?? null;
+      if (currentUid && currentUid === previousUid) {
+        activeUidRef.current = currentUid;
+        const loaded = await loadAllConversations(currentUid);
+        if (activeUidRef.current === currentUid) {
+          const next = loaded.length > 0 ? loaded : [createBlankConversation(currentUid)];
+          setConversations(next);
+          setActiveId(next[0].id);
+          setIsStorageReady(true);
+        }
+      }
     } finally {
       setIsSigningOut(false);
     }
-  }, [isSigningOut]);
+  }, [isSigningOut, resetAccountSessionState]);
 
   // Drag & Drop handlers on the main chat canvas
   const handleDragEnter = (e: DragEvent<HTMLDivElement>) => {

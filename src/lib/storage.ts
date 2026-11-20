@@ -1,9 +1,25 @@
 import type { Conversation, MessageAttachment } from '../types/chat';
 
-const DB_NAME = 'veyric_ai_storage';
-const DB_VERSION = 1;
-const STORE_NAME = 'conversations';
-const LS_FALLBACK_KEY = 'veyric_ai_conversations_v1';
+export const DB_NAME = 'veyric_ai_storage';
+export const DB_VERSION = 2;
+export const LEGACY_STORE_NAME = 'conversations';
+export const USER_STORE_NAME = 'user_conversations';
+export const LEGACY_LS_FALLBACK_KEY = 'veyric_ai_conversations_v1';
+export const USER_LS_KEY_PREFIX = 'veyric_ai_conversations_v2_uid_';
+
+interface StoredUserConversation extends Conversation {
+  ownerUid: string;
+}
+
+function normalizeUid(uid: string | null | undefined): string | null {
+  if (typeof uid !== 'string') return null;
+  const trimmed = uid.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function getUserLocalStorageKey(uid: string): string {
+  return `${USER_LS_KEY_PREFIX}${encodeURIComponent(uid)}`;
+}
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -14,12 +30,28 @@ function openDatabase(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        store.createIndex('updatedAt', 'updatedAt', { unique: false });
+      // Preserve any existing legacy v1 store untouched without migrating or assigning an ownerUid.
+      if (!db.objectStoreNames.contains(LEGACY_STORE_NAME)) {
+        const legacyStore = db.createObjectStore(LEGACY_STORE_NAME, { keyPath: 'id' });
+        legacyStore.createIndex('updatedAt', 'updatedAt', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(USER_STORE_NAME)) {
+        const userStore = db.createObjectStore(USER_STORE_NAME, {
+          keyPath: ['ownerUid', 'id'],
+        });
+        userStore.createIndex('ownerUid', 'ownerUid', { unique: false });
+        userStore.createIndex('ownerUpdatedAt', ['ownerUid', 'updatedAt'], {
+          unique: false,
+        });
       }
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => {
+        db.close();
+      };
+      resolve(db);
+    };
     request.onerror = () => reject(request.error ?? new Error('Failed to open IndexedDB'));
   });
 }
@@ -38,10 +70,14 @@ function sanitizeAttachmentForStorage(att: MessageAttachment): MessageAttachment
   };
 }
 
-function sanitizeConversationForStorage(conv: Conversation): Conversation {
+function sanitizeConversationForStorage(
+  conversation: Conversation,
+  ownerUid: string
+): StoredUserConversation {
   return {
-    ...conv,
-    messages: conv.messages
+    ...conversation,
+    ownerUid,
+    messages: conversation.messages
       .filter((m) => !m.isStreaming || m.content.trim().length > 0 || Boolean(m.error))
       .map((m) => ({
         ...m,
@@ -54,75 +90,131 @@ function sanitizeConversationForStorage(conv: Conversation): Conversation {
   };
 }
 
-export async function loadAllConversations(): Promise<Conversation[]> {
+function loadFromUserLocalStorage(ownerUid: string): Conversation[] {
   try {
-    const db = await openDatabase();
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.getAll();
+    if (typeof localStorage === 'undefined') return [];
+    const raw = localStorage.getItem(getUserLocalStorageKey(ownerUid));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (item): item is StoredUserConversation =>
+          Boolean(item) &&
+          typeof item === 'object' &&
+          typeof (item as Conversation).id === 'string' &&
+          (item as StoredUserConversation).ownerUid === ownerUid
+      )
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  } catch {
+    return [];
+  }
+}
+
+function writeToUserLocalStorage(ownerUid: string, items: StoredUserConversation[]): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(getUserLocalStorageKey(ownerUid), JSON.stringify(items));
+  } catch {
+    // Storage quota exceeded or unavailable; fail silently without breaking active UI
+  }
+}
+
+export async function loadAllConversations(uid: string): Promise<Conversation[]> {
+  const ownerUid = normalizeUid(uid);
+  if (!ownerUid) {
+    return [];
+  }
+
+  let db: IDBDatabase | null = null;
+  try {
+    db = await openDatabase();
+    return await new Promise<Conversation[]>((resolve, reject) => {
+      const tx = db!.transaction(USER_STORE_NAME, 'readonly');
+      const store = tx.objectStore(USER_STORE_NAME);
+      const index = store.index('ownerUid');
+      const req = index.getAll(ownerUid);
       req.onsuccess = () => {
-        const items = (req.result as Conversation[]) ?? [];
-        items.sort((a, b) => b.updatedAt - a.updatedAt);
-        resolve(items);
+        const rawItems = (req.result as StoredUserConversation[]) ?? [];
+        const owned = rawItems.filter(
+          (item) => item && item.ownerUid === ownerUid && typeof item.id === 'string'
+        );
+        owned.sort((a, b) => b.updatedAt - a.updatedAt);
+        resolve(owned);
       };
       req.onerror = () => reject(req.error ?? new Error('Failed to read conversations'));
     });
   } catch {
-    try {
-      const raw = localStorage.getItem(LS_FALLBACK_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw) as Conversation[];
-      return Array.isArray(parsed)
-        ? parsed.sort((a, b) => b.updatedAt - a.updatedAt)
-        : [];
-    } catch {
-      return [];
-    }
+    return loadFromUserLocalStorage(ownerUid);
+  } finally {
+    db?.close();
   }
 }
 
-export async function saveConversation(conversation: Conversation): Promise<void> {
-  const clean = sanitizeConversationForStorage(conversation);
+export async function saveConversation(
+  uid: string,
+  conversation: Conversation
+): Promise<void> {
+  const ownerUid = normalizeUid(uid);
+  if (!ownerUid) {
+    return;
+  }
+  if (conversation.ownerUid && conversation.ownerUid !== ownerUid) {
+    return;
+  }
+
+  const clean = sanitizeConversationForStorage(conversation, ownerUid);
+  let db: IDBDatabase | null = null;
   try {
-    const db = await openDatabase();
+    db = await openDatabase();
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
+      const tx = db!.transaction(USER_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(USER_STORE_NAME);
       store.put(clean);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error ?? new Error('Failed to save conversation'));
     });
   } catch {
-    try {
-      const existing = await loadAllConversations();
-      const filtered = existing.filter((c) => c.id !== clean.id);
-      filtered.unshift(clean);
-      localStorage.setItem(LS_FALLBACK_KEY, JSON.stringify(filtered.slice(0, 40)));
-    } catch {
-      // Storage quota exceeded; fail silently without breaking active UI
-    }
+    const existing = loadFromUserLocalStorage(ownerUid).map((c) => ({
+      ...c,
+      ownerUid,
+    }));
+    const filtered = existing.filter((c) => c.id !== clean.id);
+    filtered.unshift(clean);
+    writeToUserLocalStorage(ownerUid, filtered.slice(0, 40));
+  } finally {
+    db?.close();
   }
 }
 
-export async function removeConversation(conversationId: string): Promise<void> {
+export async function removeConversation(
+  uid: string,
+  conversationId: string
+): Promise<void> {
+  const ownerUid = normalizeUid(uid);
+  if (!ownerUid || !conversationId) {
+    return;
+  }
+
+  let db: IDBDatabase | null = null;
   try {
-    const db = await openDatabase();
+    db = await openDatabase();
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      store.delete(conversationId);
+      const tx = db!.transaction(USER_STORE_NAME, 'readwrite');
+      const store = tx.objectStore(USER_STORE_NAME);
+      store.delete([ownerUid, conversationId]);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error ?? new Error('Failed to delete conversation'));
     });
   } catch {
-    try {
-      const existing = await loadAllConversations();
-      const filtered = existing.filter((c) => c.id !== conversationId);
-      localStorage.setItem(LS_FALLBACK_KEY, JSON.stringify(filtered));
-    } catch {
-      // Ignore fallback storage errors
-    }
+    const existing = loadFromUserLocalStorage(ownerUid).map((c) => ({
+      ...c,
+      ownerUid,
+    }));
+    const filtered = existing.filter((c) => c.id !== conversationId);
+    writeToUserLocalStorage(ownerUid, filtered);
+  } finally {
+    db?.close();
   }
 }
 

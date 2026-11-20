@@ -27,6 +27,11 @@ export interface ProtectionConfig {
     enabled: boolean;
     allowedUids: readonly string[];
   };
+  timeouts: {
+    chatMs: number;
+    fileUploadMs: number;
+    followupMs: number;
+  };
 }
 
 interface IntEnvSpec {
@@ -89,7 +94,7 @@ const ENV_SPECS = {
     name: 'MAX_FILE_SIZE_BYTES',
     defaultValue: 26_214_400, // 25 MiB
     min: 1024,
-    max: 52_428_800, // 50 MiB
+    max: 31_457_280, // 30 MiB
   },
   MAX_FILES_PER_REQUEST: {
     name: 'MAX_FILES_PER_REQUEST',
@@ -99,9 +104,9 @@ const ENV_SPECS = {
   },
   MAX_TOTAL_UPLOAD_BYTES: {
     name: 'MAX_TOTAL_UPLOAD_BYTES',
-    defaultValue: 41_943_040, // 40 MiB
+    defaultValue: 26_214_400, // 25 MiB
     min: 1024,
-    max: 104_857_600, // 100 MiB
+    max: 31_457_280, // 30 MiB
   },
   MAX_PROMPT_CHARS: {
     name: 'MAX_PROMPT_CHARS',
@@ -132,6 +137,24 @@ const ENV_SPECS = {
     defaultValue: 262_144, // 256 KiB
     min: 4096,
     max: 2_097_152, // 2 MiB
+  },
+  GEMINI_CHAT_TIMEOUT_MS: {
+    name: 'GEMINI_CHAT_TIMEOUT_MS',
+    defaultValue: 120_000, // 2 minutes
+    min: 5_000,
+    max: 300_000, // 5 minutes
+  },
+  GEMINI_FILE_UPLOAD_TIMEOUT_MS: {
+    name: 'GEMINI_FILE_UPLOAD_TIMEOUT_MS',
+    defaultValue: 60_000, // 1 minute
+    min: 5_000,
+    max: 300_000, // 5 minutes
+  },
+  GEMINI_FOLLOWUP_TIMEOUT_MS: {
+    name: 'GEMINI_FOLLOWUP_TIMEOUT_MS',
+    defaultValue: 15_000, // 15 seconds
+    min: 1_000,
+    max: 60_000, // 1 minute
   },
 } as const satisfies Record<string, IntEnvSpec>;
 
@@ -303,6 +326,18 @@ export function resolveProtectionConfig(
   const stagingEnabled = isStagingEnvironmentEnabled(env);
   const stagingAllowedUids = parseStagingAllowedUids(env.STAGING_ALLOWED_UIDS, warnings);
 
+  const chatTimeoutMs = parseBoundedIntegerEnv(env, ENV_SPECS.GEMINI_CHAT_TIMEOUT_MS, warnings);
+  const fileUploadTimeoutMs = parseBoundedIntegerEnv(
+    env,
+    ENV_SPECS.GEMINI_FILE_UPLOAD_TIMEOUT_MS,
+    warnings
+  );
+  const followupTimeoutMs = parseBoundedIntegerEnv(
+    env,
+    ENV_SPECS.GEMINI_FOLLOWUP_TIMEOUT_MS,
+    warnings
+  );
+
   const config: ProtectionConfig = {
     trustProxyHops,
     rateLimit: {
@@ -331,6 +366,11 @@ export function resolveProtectionConfig(
     staging: {
       enabled: stagingEnabled,
       allowedUids: stagingAllowedUids,
+    },
+    timeouts: {
+      chatMs: chatTimeoutMs,
+      fileUploadMs: fileUploadTimeoutMs,
+      followupMs: followupTimeoutMs,
     },
   };
 
@@ -361,4 +401,5 @@ export const protectionConfig: ProtectionConfig = Object.freeze({
     enabled: resolved.staging.enabled,
     allowedUids: Object.freeze([...resolved.staging.allowedUids]),
   }),
+  timeouts: Object.freeze({ ...resolved.timeouts }),
 });
