@@ -1,5 +1,17 @@
+export type AllowedGeminiModel = 'gemini-3.1-flash-lite' | 'gemini-4-hydrogen';
+
+export const DEFAULT_GEMINI_MODEL: AllowedGeminiModel = 'gemini-4-hydrogen';
+
+export const ALLOWED_GEMINI_MODELS: ReadonlySet<string> = new Set<AllowedGeminiModel>([
+  'gemini-3.1-flash-lite',
+  'gemini-4-hydrogen',
+]);
+
 export interface ProtectionConfig {
   trustProxyHops: number;
+  gemini: {
+    model: AllowedGeminiModel;
+  };
   rateLimit: {
     userRpm: number;
     ipRpm: number;
@@ -161,7 +173,35 @@ const ENV_SPECS = {
 export interface ConfigValidationWarning {
   variable: string;
   reason: string;
-  fallbackValue: number;
+  fallbackValue: number | string;
+}
+
+export function isAllowedGeminiModel(value: string): value is AllowedGeminiModel {
+  return ALLOWED_GEMINI_MODELS.has(value);
+}
+
+export function parseGeminiModel(
+  rawValue: string | undefined,
+  warnings?: ConfigValidationWarning[]
+): AllowedGeminiModel {
+  if (rawValue === undefined || rawValue.trim() === '') {
+    return DEFAULT_GEMINI_MODEL;
+  }
+
+  const trimmed = rawValue.trim();
+  if (isAllowedGeminiModel(trimmed)) {
+    return trimmed;
+  }
+
+  if (warnings) {
+    warnings.push({
+      variable: 'GEMINI_MODEL',
+      reason: 'Model is not in the allowed Gemini model allowlist',
+      fallbackValue: DEFAULT_GEMINI_MODEL,
+    });
+  }
+
+  return DEFAULT_GEMINI_MODEL;
 }
 
 function parseBoundedIntegerEnv(
@@ -262,6 +302,7 @@ export function resolveProtectionConfig(
   const warnings: ConfigValidationWarning[] = [];
 
   const trustProxyHops = parseBoundedIntegerEnv(env, ENV_SPECS.TRUST_PROXY_HOPS, warnings);
+  const geminiModel = parseGeminiModel(env.GEMINI_MODEL, warnings);
   const userRpm = parseBoundedIntegerEnv(env, ENV_SPECS.RATE_LIMIT_USER_RPM, warnings);
   const ipRpm = parseBoundedIntegerEnv(env, ENV_SPECS.RATE_LIMIT_IP_RPM, warnings);
   const userDaily = parseBoundedIntegerEnv(env, ENV_SPECS.RATE_LIMIT_USER_DAILY, warnings);
@@ -340,6 +381,9 @@ export function resolveProtectionConfig(
 
   const config: ProtectionConfig = {
     trustProxyHops,
+    gemini: {
+      model: geminiModel,
+    },
     rateLimit: {
       userRpm,
       ipRpm,
@@ -393,6 +437,7 @@ const resolved = loadProtectionConfig();
 
 export const protectionConfig: ProtectionConfig = Object.freeze({
   ...resolved,
+  gemini: Object.freeze({ ...resolved.gemini }),
   rateLimit: Object.freeze({ ...resolved.rateLimit }),
   concurrency: Object.freeze({ ...resolved.concurrency }),
   uploads: Object.freeze({ ...resolved.uploads }),

@@ -3,7 +3,11 @@ import path from 'node:path';
 import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import type { Content, GenerateContentConfig, Part } from '@google/genai';
 import mammoth from 'mammoth';
-import { protectionConfig } from './config.ts';
+import {
+  isAllowedGeminiModel,
+  protectionConfig,
+  type AllowedGeminiModel,
+} from './config.ts';
 
 export interface IncomingHistoryMessage {
   role: 'user' | 'assistant';
@@ -104,7 +108,22 @@ export function decideShouldUseWebSearch(
 const COMPLEX_TASK_REGEX =
   /(?:```|\b(?:code|typescript|javascript|python|react|sql|api|bug|debug|error|exception|stack\s*trace|refactor|optimize|algorithm|architecture|schema|database|compare|comparison|trade-?offs?|step[- ]by[- ]step|analyze|analysis|essay|report|business\s*plan|strategy)\b)/i;
 
+export function supportsMinimalThinking(model: string): boolean {
+  return model === 'gemini-3.1-flash-lite';
+}
+
+export function resolveConfiguredGeminiModel(requestedModel?: string): AllowedGeminiModel {
+  if (typeof requestedModel === 'string') {
+    const trimmed = requestedModel.trim();
+    if (isAllowedGeminiModel(trimmed)) {
+      return trimmed;
+    }
+  }
+  return protectionConfig.gemini.model;
+}
+
 export function decideThinkingLevel(params: {
+  model?: string;
   message: string;
   hasFiles: boolean;
   shouldSearch: boolean;
@@ -113,9 +132,14 @@ export function decideThinkingLevel(params: {
     return ThinkingLevel.MEDIUM;
   }
 
+  const activeModel = resolveConfiguredGeminiModel(params.model);
+  const simpleLevel = supportsMinimalThinking(activeModel)
+    ? ThinkingLevel.MINIMAL
+    : ThinkingLevel.LOW;
+
   const trimmed = params.message.trim();
   if (!trimmed || PURE_GREETING_OR_CASUAL_REGEX.test(trimmed)) {
-    return ThinkingLevel.LOW;
+    return simpleLevel;
   }
 
   if (
@@ -126,7 +150,7 @@ export function decideThinkingLevel(params: {
     return ThinkingLevel.MEDIUM;
   }
 
-  return ThinkingLevel.LOW;
+  return simpleLevel;
 }
 
 let cachedClient: GoogleGenAI | null = null;
@@ -843,8 +867,10 @@ export async function streamGeminiChat(params: {
   onDelta: (text: string) => void;
   timeouts?: { chatMs?: number; fileUploadMs?: number };
   client?: GoogleGenAI;
+  model?: string;
 }): Promise<GroundingResult> {
   const ai = params.client ?? getGeminiClient();
+  const model = resolveConfiguredGeminiModel(params.model);
   const uploadedFileNamesToCleanup: string[] = [];
   const fileUploadTimeoutMs =
     params.timeouts?.fileUploadMs ?? protectionConfig.timeouts.fileUploadMs;
@@ -883,6 +909,7 @@ export async function streamGeminiChat(params: {
 
     const contents = buildConversationContents(params.history, params.message, fileParts);
     const thinkingLevel = decideThinkingLevel({
+      model,
       message: params.message,
       hasFiles: params.files.length > 0,
       shouldSearch,
@@ -901,7 +928,7 @@ export async function streamGeminiChat(params: {
     try {
       const callGenerateStream = () =>
         ai.models.generateContentStream({
-          model: 'gemini-4-hydrogen',
+          model,
           contents,
           config: {
             ...baseConfig,
@@ -1029,6 +1056,7 @@ export async function generateFollowUpSuggestions(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
   client?: GoogleGenAI;
+  model?: string;
 }): Promise<string[]> {
   const userText = params.userMessage.trim();
   const assistantText = params.assistantMessage.trim();
@@ -1049,6 +1077,10 @@ export async function generateFollowUpSuggestions(params: {
 
   try {
     const ai = params.client ?? getGeminiClient();
+    const model = resolveConfiguredGeminiModel(params.model);
+    const followupThinkingLevel = supportsMinimalThinking(model)
+      ? ThinkingLevel.MINIMAL
+      : ThinkingLevel.LOW;
     const snippet = assistantText.slice(0, 900);
     const contentHint = params.contentType
       ? `The assistant just produced a structured deliverable of type "${params.contentType}". Suggest practical editing, refinement, or variation actions tailored to that deliverable.`
@@ -1057,12 +1089,12 @@ export async function generateFollowUpSuggestions(params: {
     const response = await raceWithTimeoutContext(
       () =>
         ai.models.generateContent({
-          model: 'gemini-4-hydrogen',
+          model,
           contents: `User message:\n${userText || '(Attached file analysis)'}\n\nAssistant response excerpt:\n${snippet}`,
           config: {
             abortSignal: timeoutCtx.signal,
             httpOptions: { timeout: timeoutCtx.remainingMs() },
-            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            thinkingConfig: { thinkingLevel: followupThinkingLevel },
             systemInstruction: `Generate 2 to 4 concise follow-up questions or next-step action prompts that the user can click to continue this exact conversation.
 Rules:
 - Match the primary language of the conversation (use Burmese if the conversation is in Burmese, English if in English).
