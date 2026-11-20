@@ -5,6 +5,7 @@ import type { User } from 'firebase/auth';
 import {
   AlertTriangle,
   ArrowDown,
+  AudioLines,
   Loader2,
   PanelLeft,
   Plus,
@@ -43,9 +44,11 @@ import {
 import { detectContentBlockType } from './lib/contentDetector';
 import {
   getSoundEnabled,
+  installAudioUnlockListeners,
   playClickSound,
   playResponseSound,
   playSendSound,
+  playTestSound,
   setSoundEnabledPref,
 } from './lib/sound';
 import { AuthScreen } from './components/AuthScreen';
@@ -135,6 +138,11 @@ export default function App() {
     setIsDraggingFile(false);
     dragDepthRef.current = 0;
     userScrolledUpRef.current = false;
+  }, []);
+
+  // Unlock Web Audio cleanly on first user interaction (Android Chrome / mobile Safari)
+  useEffect(() => {
+    return installAudioUnlockListeners();
   }, []);
 
   // Monitor Firebase Authentication session state
@@ -426,7 +434,9 @@ export default function App() {
             );
           },
           onDone: (grounding) => {
-            playResponseSound();
+            if (!controller.signal.aborted && activeUidRef.current === params.ownerUid) {
+              playResponseSound();
+            }
             updateConversation(
               params.conversationId,
               (conv) => ({
@@ -796,15 +806,18 @@ export default function App() {
   }, []);
 
   const handleToggleSound = useCallback(() => {
-    setSoundEnabled((prev) => {
-      const next = !prev;
-      setSoundEnabledPref(next);
-      if (next) {
-        playClickSound();
-      }
-      return next;
-    });
-  }, []);
+    const next = !soundEnabled;
+    setSoundEnabledPref(next);
+    setSoundEnabled(next);
+    if (next) {
+      playClickSound();
+    }
+  }, [soundEnabled]);
+
+  const handleTestSound = useCallback(() => {
+    if (!soundEnabled) return;
+    playTestSound();
+  }, [soundEnabled]);
 
   const handleSignOut = useCallback(async () => {
     if (isSigningOut) return;
@@ -943,14 +956,26 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+              {soundEnabled && (
+                <button
+                  type="button"
+                  onClick={handleTestSound}
+                  aria-label="Test interface sound"
+                  title="Test sound"
+                  className="glass-control flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/85 hover:text-white focus-visible:outline-2 focus-visible:outline-white sm:h-10 sm:w-10"
+                >
+                  <AudioLines className="h-4 w-4" />
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={handleToggleSound}
                 aria-pressed={soundEnabled}
                 aria-label={soundEnabled ? 'Turn off sound effects' : 'Turn on sound effects'}
                 title={soundEnabled ? 'Sound On' : 'Sound Off'}
-                className="glass-control flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/85 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+                className="glass-control flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/85 hover:text-white focus-visible:outline-2 focus-visible:outline-white sm:h-10 sm:w-10"
               >
                 {soundEnabled ? (
                   <Volume2 className="h-4 w-4" />
@@ -965,7 +990,7 @@ export default function App() {
                   playClickSound();
                   handleNewChat();
                 }}
-                className="glass-control inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl px-3 text-xs font-medium text-white whitespace-nowrap focus-visible:outline-2 focus-visible:outline-white"
+                className="glass-control inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl px-2.5 text-xs font-medium text-white whitespace-nowrap focus-visible:outline-2 focus-visible:outline-white sm:h-10 sm:px-3"
                 aria-label="Start new chat"
               >
                 <Plus className="h-4 w-4" />

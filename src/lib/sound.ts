@@ -1,7 +1,16 @@
 const SOUND_PREF_KEY = 'veyric_ai_sound_enabled';
 
+type BrowserWindowWithWebkitAudio = Window & {
+  AudioContext?: typeof AudioContext;
+  webkitAudioContext?: typeof AudioContext;
+};
+
 let audioCtx: AudioContext | null = null;
+let masterGain: GainNode | null = null;
+let bufferPrimedCtx: AudioContext | null = null;
+let pendingResumePromise: Promise<void> | null = null;
 let userHasInteracted = false;
+let unlockListenersInstalled = false;
 
 export function getSoundEnabled(): boolean {
   if (typeof window === 'undefined') return true;
@@ -24,12 +33,22 @@ export function setSoundEnabledPref(enabled: boolean): void {
   }
 }
 
-function getAudioContext(): AudioContext | null {
+function getAudioContextConstructor(): typeof AudioContext | null {
   if (typeof window === 'undefined') return null;
-  const AudioCtx =
-    window.AudioContext ||
-    (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  const win = window as BrowserWindowWithWebkitAudio;
+  return win.AudioContext || win.webkitAudioContext || null;
+}
+
+function ensureAudioContext(): { ctx: AudioContext; dest: AudioNode } | null {
+  const AudioCtx = getAudioContextConstructor();
   if (!AudioCtx) return null;
+
+  if (audioCtx && audioCtx.state === 'closed') {
+    audioCtx = null;
+    masterGain = null;
+    bufferPrimedCtx = null;
+    pendingResumePromise = null;
+  }
 
   if (!audioCtx) {
     try {
@@ -38,133 +57,284 @@ function getAudioContext(): AudioContext | null {
       return null;
     }
   }
-  return audioCtx;
+
+  if (!masterGain) {
+    try {
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(0.9, audioCtx.currentTime);
+      gain.connect(audioCtx.destination);
+      masterGain = gain;
+    } catch {
+      return { ctx: audioCtx, dest: audioCtx.destination };
+    }
+  }
+
+  return { ctx: audioCtx, dest: masterGain };
+}
+
+/**
+ * Prime mobile hardware audio output (Android Chrome / iOS WebKit) by routing
+ * a silent 1-sample buffer to destination during a valid user activation.
+ */
+function primeAudioOutput(ctx: AudioContext): void {
+  if (bufferPrimedCtx === ctx) return;
+  try {
+    if (typeof ctx.createBuffer !== 'function' || typeof ctx.createBufferSource !== 'function') {
+      bufferPrimedCtx = ctx;
+      return;
+    }
+    const sampleRate = ctx.sampleRate && ctx.sampleRate > 0 ? ctx.sampleRate : 22050;
+    const silentBuffer = ctx.createBuffer(1, 1, sampleRate);
+    const source = ctx.createBufferSource();
+    source.buffer = silentBuffer;
+    source.connect(ctx.destination);
+    source.onended = () => {
+      try {
+        source.disconnect();
+      } catch {
+        // Ignore cleanup errors
+      }
+    };
+    source.start(0);
+    bufferPrimedCtx = ctx;
+  } catch {
+    // Ignore priming failures
+  }
+}
+
+function resumeAudioContext(ctx: AudioContext): Promise<void> {
+  if (ctx.state === 'running') {
+    return Promise.resolve();
+  }
+  if (pendingResumePromise) {
+    return pendingResumePromise;
+  }
+  try {
+    const resumeResult = ctx.resume();
+    pendingResumePromise = Promise.resolve(resumeResult)
+      .catch(() => {})
+      .finally(() => {
+        pendingResumePromise = null;
+      });
+    return pendingResumePromise;
+  } catch {
+    pendingResumePromise = null;
+    return Promise.resolve();
+  }
 }
 
 export function markUserAudioInteraction(): void {
   userHasInteracted = true;
-  const ctx = getAudioContext();
-  if (ctx && ctx.state === 'suspended') {
-    void ctx.resume().catch(() => {});
+  if (!getSoundEnabled()) return;
+
+  const nodes = ensureAudioContext();
+  if (!nodes) return;
+
+  primeAudioOutput(nodes.ctx);
+  if (nodes.ctx.state !== 'running') {
+    void resumeAudioContext(nodes.ctx);
   }
 }
 
-function canPlaySound(requireDirectGesture: boolean): AudioContext | null {
-  if (!getSoundEnabled()) return null;
+/**
+ * Attach capture-phase listeners for Chrome-valid user activation events
+ * (`pointerup`, `touchend`, `click`, `keydown`) so Android Chrome unlocks Web Audio
+ * as soon as the user interacts with the page, without ever autoplaying sound.
+ */
+export function installAudioUnlockListeners(): () => void {
+  if (typeof window === 'undefined') {
+    return () => {};
+  }
+  if (unlockListenersInstalled) {
+    return () => {};
+  }
+
+  const onUserGesture = () => {
+    markUserAudioInteraction();
+  };
+
+  const events = ['pointerup', 'touchend', 'click', 'keydown'] as const;
+  const options: AddEventListenerOptions = { capture: true, passive: true };
+
+  for (const evt of events) {
+    window.addEventListener(evt, onUserGesture, options);
+  }
+  unlockListenersInstalled = true;
+
+  return () => {
+    for (const evt of events) {
+      window.removeEventListener(evt, onUserGesture, options);
+    }
+    unlockListenersInstalled = false;
+  };
+}
+
+function withReadyAudioContext(
+  requireDirectGesture: boolean,
+  schedule: (ctx: AudioContext, dest: AudioNode) => void
+): void {
+  if (!getSoundEnabled()) return;
+
   if (requireDirectGesture) {
     markUserAudioInteraction();
   } else if (!userHasInteracted) {
-    return null;
+    return;
   }
 
-  const ctx = getAudioContext();
-  if (!ctx) return null;
-  if (ctx.state === 'suspended') {
-    if (!requireDirectGesture) return null;
-    void ctx.resume().catch(() => {});
+  const nodes = ensureAudioContext();
+  if (!nodes) return;
+
+  const { ctx, dest } = nodes;
+
+  if (ctx.state === 'running') {
+    try {
+      schedule(ctx, dest);
+    } catch {
+      // Audio playback failure should never interrupt UI
+    }
+    return;
   }
-  return ctx;
+
+  // On Android Chrome, schedule tones ONLY after AudioContext.resume() resolves
+  // and `ctx.state` transitions to `'running'` so `ctx.currentTime` is live.
+  void resumeAudioContext(ctx).then(() => {
+    if (!getSoundEnabled() || ctx.state !== 'running') return;
+    try {
+      schedule(ctx, dest);
+    } catch {
+      // Audio playback failure should never interrupt UI
+    }
+  });
+}
+
+interface ToneOptions {
+  type: OscillatorType;
+  startFreq: number;
+  endFreq?: number;
+  delay?: number;
+  duration: number;
+  peakGain: number;
+}
+
+function playTone(ctx: AudioContext, dest: AudioNode, opts: ToneOptions): void {
+  const delay = opts.delay ?? 0;
+  // Small lookahead prevents Chrome Blink from clipping automation at t=0
+  const startTime = ctx.currentTime + 0.008 + delay;
+  const stopTime = startTime + opts.duration;
+  const attackTime = startTime + Math.min(0.012, opts.duration * 0.25);
+
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = opts.type;
+  osc.frequency.setValueAtTime(opts.startFreq, startTime);
+  if (typeof opts.endFreq === 'number' && opts.endFreq > 0) {
+    osc.frequency.exponentialRampToValueAtTime(
+      opts.endFreq,
+      startTime + Math.max(0.015, opts.duration * 0.72)
+    );
+  }
+
+  gain.gain.setValueAtTime(0.0008, startTime);
+  gain.gain.linearRampToValueAtTime(opts.peakGain, attackTime);
+  gain.gain.exponentialRampToValueAtTime(0.0008, stopTime);
+
+  osc.connect(gain);
+  gain.connect(dest);
+
+  osc.onended = () => {
+    try {
+      osc.disconnect();
+      gain.disconnect();
+    } catch {
+      // Ignore disconnect errors
+    }
+  };
+
+  osc.start(startTime);
+  osc.stop(stopTime + 0.008);
 }
 
 /** Soft water-glass tap / pop for UI buttons and controls */
 export function playClickSound(): void {
-  const ctx = canPlaySound(true);
-  if (!ctx) return;
-
-  try {
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(560, now);
-    osc.frequency.exponentialRampToValueAtTime(780, now + 0.036);
-
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.linearRampToValueAtTime(0.045, now + 0.006);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.052);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.055);
-  } catch {
-    // Audio playback failure should never interrupt UI
-  }
+  withReadyAudioContext(true, (ctx, dest) => {
+    playTone(ctx, dest, {
+      type: 'sine',
+      startFreq: 620,
+      endFreq: 940,
+      duration: 0.075,
+      peakGain: 0.20,
+    });
+  });
 }
 
 /** Crisp ascending glass-pop confirmation for sending a message */
 export function playSendSound(): void {
-  const ctx = canPlaySound(true);
-  if (!ctx) return;
-
-  try {
-    const now = ctx.currentTime;
-
-    const osc1 = ctx.createOscillator();
-    const gain1 = ctx.createGain();
-    osc1.type = 'sine';
-    osc1.frequency.setValueAtTime(460, now);
-    osc1.frequency.exponentialRampToValueAtTime(690, now + 0.055);
-
-    gain1.gain.setValueAtTime(0.0001, now);
-    gain1.gain.linearRampToValueAtTime(0.055, now + 0.008);
-    gain1.gain.exponentialRampToValueAtTime(0.0001, now + 0.075);
-
-    osc1.connect(gain1);
-    gain1.connect(ctx.destination);
-    osc1.start(now);
-    osc1.stop(now + 0.08);
-
-    const osc2 = ctx.createOscillator();
-    const gain2 = ctx.createGain();
-    osc2.type = 'triangle';
-    osc2.frequency.setValueAtTime(760, now + 0.035);
-    osc2.frequency.exponentialRampToValueAtTime(1020, now + 0.095);
-
-    gain2.gain.setValueAtTime(0.0001, now + 0.035);
-    gain2.gain.linearRampToValueAtTime(0.038, now + 0.046);
-    gain2.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
-
-    osc2.connect(gain2);
-    gain2.connect(ctx.destination);
-    osc2.start(now + 0.035);
-    osc2.stop(now + 0.125);
-  } catch {
-    // Audio playback failure should never interrupt UI
-  }
+  withReadyAudioContext(true, (ctx, dest) => {
+    playTone(ctx, dest, {
+      type: 'sine',
+      startFreq: 523.25,
+      endFreq: 783.99,
+      delay: 0,
+      duration: 0.085,
+      peakGain: 0.22,
+    });
+    playTone(ctx, dest, {
+      type: 'triangle',
+      startFreq: 880,
+      endFreq: 1174.66,
+      delay: 0.04,
+      duration: 0.11,
+      peakGain: 0.16,
+    });
+  });
 }
 
 /** Gentle crystalline chime when an AI response completes (only after user interaction) */
 export function playResponseSound(): void {
-  const ctx = canPlaySound(false);
-  if (!ctx) return;
+  withReadyAudioContext(false, (ctx, dest) => {
+    playTone(ctx, dest, {
+      type: 'sine',
+      startFreq: 659.25,
+      delay: 0,
+      duration: 0.24,
+      peakGain: 0.20,
+    });
+    playTone(ctx, dest, {
+      type: 'sine',
+      startFreq: 987.77,
+      delay: 0.065,
+      duration: 0.30,
+      peakGain: 0.18,
+    });
+  });
+}
 
-  try {
-    const now = ctx.currentTime;
-    const notes = [
-      { freq: 659.25, delay: 0, peak: 0.042, duration: 0.22 },
-      { freq: 987.77, delay: 0.055, peak: 0.036, duration: 0.28 },
-    ];
+/** User-triggered sound preview to verify playback on mobile & desktop devices */
+export function playTestSound(): void {
+  withReadyAudioContext(true, (ctx, dest) => {
+    playTone(ctx, dest, {
+      type: 'sine',
+      startFreq: 587.33,
+      delay: 0,
+      duration: 0.14,
+      peakGain: 0.22,
+    });
+    playTone(ctx, dest, {
+      type: 'sine',
+      startFreq: 880,
+      delay: 0.07,
+      duration: 0.24,
+      peakGain: 0.20,
+    });
+  });
+}
 
-    for (const note of notes) {
-      const start = now + note.delay;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(note.freq, start);
-
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.linearRampToValueAtTime(note.peak, start + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + note.duration);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(start);
-      osc.stop(start + note.duration + 0.01);
-    }
-  } catch {
-    // Audio playback failure should never interrupt UI
-  }
+export function __resetSoundStateForTesting(): void {
+  audioCtx = null;
+  masterGain = null;
+  bufferPrimedCtx = null;
+  pendingResumePromise = null;
+  userHasInteracted = false;
+  unlockListenersInstalled = false;
 }
