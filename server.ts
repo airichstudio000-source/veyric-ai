@@ -33,10 +33,6 @@ import {
 
 const PORT = Number(process.env.PORT || 3000);
 
-await uploadDirectoryManager.ensureBaseDir();
-await uploadDirectoryManager.runStartupCleanup();
-uploadDirectoryManager.startPeriodicCleanup(UPLOAD_CLEANUP_INTERVAL_MS);
-
 const preMulterUploadGuard = createPreMulterUploadGuard(uploadDirectoryManager, protectionConfig);
 const protectedUpload = createProtectedMulter(uploadDirectoryManager, protectionConfig);
 const uploadErrorHandler = createUploadErrorHandler(uploadDirectoryManager, protectionConfig);
@@ -308,9 +304,44 @@ app.post(
 // Handle Multer & upload limit errors cleanly
 app.use(uploadErrorHandler);
 
+async function initializeUploadStorageInBackground(): Promise<void> {
+  if (isShuttingDown) {
+    return;
+  }
+
+  console.log('[VEYRIC AI] Background upload cleanup started.');
+
+  try {
+    await uploadDirectoryManager.ensureBaseDir();
+    if (isShuttingDown) {
+      return;
+    }
+
+    const removedCount = await uploadDirectoryManager.runStartupCleanup();
+    if (isShuttingDown) {
+      return;
+    }
+
+    uploadDirectoryManager.startPeriodicCleanup(UPLOAD_CLEANUP_INTERVAL_MS);
+    console.log(
+      `[VEYRIC AI] Background upload cleanup completed (removed ${removedCount} stale entr${removedCount === 1 ? 'y' : 'ies'}).`
+    );
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'Unknown filesystem error';
+    console.error(`[VEYRIC AI] Background upload cleanup failed: ${reason}`);
+    if (!isShuttingDown) {
+      uploadDirectoryManager.startPeriodicCleanup(UPLOAD_CLEANUP_INTERVAL_MS);
+    }
+  }
+}
+
 async function startServer() {
   const nodeEnv = process.env.NODE_ENV?.trim().toLowerCase();
   const isProdOrStaging = nodeEnv === 'production' || nodeEnv === 'staging';
+
+  console.log(
+    `[VEYRIC AI] Server startup initiated (mode: ${isProdOrStaging ? nodeEnv : 'development'}, port: ${PORT}).`
+  );
 
   if (!isProdOrStaging) {
     const { createServer: createViteServer } = await import('vite');
@@ -338,6 +369,7 @@ async function startServer() {
 
   httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`VEYRIC AI server running on http://0.0.0.0:${PORT}`);
+    void initializeUploadStorageInBackground();
   });
 }
 
